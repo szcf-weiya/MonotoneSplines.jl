@@ -53,7 +53,7 @@ def train_G(y, B, L, lam, K = 10, nepoch = 100, eta = 0.001, sigma = 1):
         loss1.backward()
         opt1.step()
         #
-        sigma = np.sqrt(loss1_fit.cpu().detach().numpy())
+        sigma = torch.std(ypred.detach() - y, unbiased = True)
         ## second step
         epsilons = torch.randn((K, n)).to(device) * sigma
         #        1xn      +      Kxn
