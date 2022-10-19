@@ -1,0 +1,15 @@
+name = "MonotoneSplines"
+uuid = "92812004-5f8d-4354-96af-0c8b7c0637d0"
+authors = ["szcf-weiya <szcfweiya@gmail.com>"]
+version = "0.1.0"
+
+[deps]
+ECOS = "e2685f51-7e38-5353-a97d-a921fd2c8199"
+Flux = "587475ba-b771-5e3f-ad9e-33799f191a9c"
+JuMP = "4076af6c-e467-56ae-b986-b466b2749572"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
+PyCall = "438e738f-606a-5dbb-bf0a-cddfbfd45ab0"
+RCall = "6f49c342-dc21-5d91-9882-a32aef131414"
+Serialization = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
+StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
