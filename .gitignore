@@ -2,3 +2,5 @@ Manifest.toml
 .spyproject/
 */.ipynb_checkpoints/
 */__pycache__/
+*.sil
+*.png

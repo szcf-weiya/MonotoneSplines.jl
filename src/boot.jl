@@ -200,35 +200,6 @@ function train_G2(rawx, rawy, rawB; nepoch = 100, σ = 0.1, K = 10,
     return cpu(G)
 end
 
-# early stop when crit is increasing
-function early_stop(crit::AbstractVector, curr = 1, patience = 3)
-    if curr <= patience
-        return false
-    end
-    flag = true
-    for i = 1:patience
-        flag = flag && (crit[curr] > crit[curr-i])
-    end
-    return flag
-end
-
-function early_stop(crit::AbstractVector, delta = 1e-3)
-    n = length(crit)
-    flag = true
-    for i = n:-1:2
-        # flag = flag && (crit[i] > crit[i-1])
-       # not consective increasing
-    #    flag = flag && (crit[i] > crit[1])
-        if crit[i] <= crit[1] + delta
-            return false
-        end
-    end
-    return flag
-end
-
-
-
-
 function train_G(rawx, rawy, rawB; nepoch = 100, σ = 0.1, K = 10, nhidden = 1000, η = 0.001, nB = 100, device = gpu, C = 100, patience = 3, K2=100, f = x->x^3)
     x = device(rawx)
     y0 = f.(x)
