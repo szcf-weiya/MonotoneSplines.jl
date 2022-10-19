@@ -57,7 +57,7 @@ def train_G(y, B, L, lam, K = 10, nepoch = 100, eta = 0.001, sigma = 1):
         ## second step
         epsilons = torch.randn((K, n)).to(device) * sigma
         #        1xn      +      Kxn
-        ytrain = ypred + epsilons 
+        ytrain = ypred.detach() + epsilons 
         betas = model(ytrain) # K x J
         yspred = torch.matmul(betas, B.t()) # nxJ x JxK
         # ...............................................................KxJ x JxJ
