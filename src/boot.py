@@ -25,7 +25,7 @@ class Model(nn.Module):
 
 # two different optimizers
 # support lambda
-def train_G(y, B, L, lam, K = 10, nepoch = 100, eta = 0.001, sigma = 1):
+def train_G(y, B, L, lam, K = 10, nepoch = 100, eta = 0.001, sigma = 1, amsgrad = False):
     #
     device = "cuda" if torch.cuda.is_available() else "cpu"
     y = torch.from_numpy(y).to(device)
@@ -33,8 +33,8 @@ def train_G(y, B, L, lam, K = 10, nepoch = 100, eta = 0.001, sigma = 1):
     L = torch.from_numpy(L).to(device)
     n, J = B.size()
     model = Model(y, B, 1000).to(device)
-    opt1 = torch.optim.Adam(model.parameters(), lr = eta / K, amsgrad = True)
-    opt2 = torch.optim.Adam(model.parameters(), lr = eta, amsgrad = True)
+    opt1 = torch.optim.Adam(model.parameters(), lr = eta / K, amsgrad = amsgrad)
+    opt2 = torch.optim.Adam(model.parameters(), lr = eta, amsgrad = amsgrad)
     loss_fn = nn.functional.mse_loss
     # just realized that pytorch also did not do sort in batch
     LOSS = torch.zeros(nepoch, 2)
