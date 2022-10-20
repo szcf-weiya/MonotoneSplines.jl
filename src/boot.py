@@ -25,16 +25,18 @@ class Model(nn.Module):
 
 # two different optimizers
 # support lambda
-def train_G(y, B, L, lam, K = 10, nepoch = 100, eta = 0.001, sigma = 1, amsgrad = False):
+def train_G(y, B, L, lam, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta0 = 0.0001, gamma = 0.9, sigma = 1, amsgrad = False, decay_step = 1000):
     #
     device = "cuda" if torch.cuda.is_available() else "cpu"
     y = torch.from_numpy(y).to(device)
     B = torch.from_numpy(B).to(device)
     L = torch.from_numpy(L).to(device)
     n, J = B.size()
-    model = Model(y, B, 1000).to(device)
-    opt1 = torch.optim.Adam(model.parameters(), lr = eta / K, amsgrad = amsgrad)
+    model = Model(y, B, nhidden).to(device)
+    opt1 = torch.optim.Adam(model.parameters(), lr = eta0, amsgrad = amsgrad)
     opt2 = torch.optim.Adam(model.parameters(), lr = eta, amsgrad = amsgrad)
+    sch1 = torch.optim.lr_scheduler.StepLR(opt1, gamma = gamma, step_size = decay_step)
+    sch2 = torch.optim.lr_scheduler.StepLR(opt2, gamma = gamma, step_size = decay_step)
     loss_fn = nn.functional.mse_loss
     # just realized that pytorch also did not do sort in batch
     LOSS = torch.zeros(nepoch, 2)
@@ -52,6 +54,7 @@ def train_G(y, B, L, lam, K = 10, nepoch = 100, eta = 0.001, sigma = 1, amsgrad 
         opt1.zero_grad()
         loss1.backward()
         opt1.step()
+        sch1.step()
         #
         sigma = torch.std(ypred.detach() - y, unbiased = True)
         ## second step
@@ -59,18 +62,19 @@ def train_G(y, B, L, lam, K = 10, nepoch = 100, eta = 0.001, sigma = 1, amsgrad 
         #        1xn      +      Kxn
         ytrain = ypred.detach() + epsilons 
         betas = model(ytrain) # K x J
-        yspred = torch.matmul(betas, B.t()) # nxJ x JxK
+        yspred = torch.matmul(betas, B.t()) # KxJ x Jxn
         # ...............................................................KxJ x JxJ
         loss2 = loss_fn(yspred, ytrain) + lam * torch.square(torch.matmul(betas, L)).mean() 
         #
         opt2.zero_grad()
         loss2.backward()
         opt2.step()
+        sch2.step()
         #
         LOSS[epoch, 0] = loss1.item()
         LOSS[epoch, 1] = loss2.item()
         # print(f"epoch = {epoch}, loss = {LOSS[epoch,]}, sigma = {sigma}")
-        pbar.set_postfix(epoch = epoch, loss = LOSS[epoch,], sigma = sigma)
+        pbar.set_postfix(epoch = epoch, loss = LOSS[epoch,], sigma = sigma, lr1 = sch1.get_last_lr())
     #
     #
     G = lambda y: model(torch.from_numpy(y).to(device)).cpu().detach().numpy() # support y is Float32

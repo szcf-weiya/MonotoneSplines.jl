@@ -17,6 +17,10 @@ logit(x) = 1/(1+exp(-x))
 function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200, 
                         K = 10, nrep = 100, α = 0.05, C = 1, patience = 3, η = 0.001, method = "pytorch",
                         λ = 0.1,
+                        amsgrad = true,
+                        γ = 0.9,
+                        η0 = 0.0001,
+                        decay_step = Int(1 / η),
                         fig = true
                         )
     timestamp = replace(strip(read(`date -Iseconds`, String)), ":" => "_")
@@ -34,7 +38,7 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
         res_time[i] = @elapsed begin
             if method == "pytorch"
                 #Ghat = py_train_G(y, B, K = K, nepoch = nepoch, η = η, σ = σ0)
-                Ghat = py_train_G(y, B, L, λ, K = K, nepoch = nepoch, η = η, σ = σ0, figname = ifelse(fig, "loss-$f-$i.png", nothing))
+                Ghat = py_train_G(y, B, L, λ, K = K, nepoch = nepoch, η = η, σ = σ0, figname = ifelse(fig, "loss-$f-$i.png", nothing), amsgrad = amsgrad, γ = γ, η0 = η0, decay_step = decay_step)
             elseif method == "jl_lambda"
                 Ghat = train_G(x, y, B, L, λ, K = K, σ = σ0, nepoch = nepoch, nB = nB, η = η)
             else
@@ -326,12 +330,15 @@ function py_train_G(y::AbstractVector, B::AbstractMatrix; η = 0.001, K = 10, ne
 end
 
 function py_train_G(y::AbstractVector, B::AbstractMatrix, L::AbstractMatrix, λ::AbstractFloat; 
-                            η = 0.001, K = 10, nepoch = 100, σ = 1.0, 
+                            η = 0.001, η0 = 0.0001, K = 10, nepoch = 100, σ = 1.0, 
+                            amsgrad = false,
+                            γ = 0.9,
+                            decay_step = Int(1 / η),
                             figname = "pyloss.png" # not plot if nothing
                             )
     # Ghat, LOSS1, LOSS2 = py"train_G"(Float32.(y), Float32.(B), eta = η, K = K, nepoch = nepoch, sigma = σ)
     # Ghat, LOSS = py"train_G"(Float32.(y), Float32.(B), Float32.(L), λ, eta = η, K = K, nepoch = nepoch, sigma = σ)
-    Ghat, LOSS = _py_boot."train_G"(Float32.(y), Float32.(B), Float32.(L), λ, eta = η, K = K, nepoch = nepoch, sigma = σ)
+    Ghat, LOSS = _py_boot."train_G"(Float32.(y), Float32.(B), Float32.(L), λ, eta = η, K = K, nepoch = nepoch, sigma = σ, amsgrad = amsgrad, gamma = γ, eta0 = η0, decay_step = decay_step)
     # savefig(plot(
     #     # plot(log.(LOSS1)),
     #     # plot(log.(LOSS2)),
