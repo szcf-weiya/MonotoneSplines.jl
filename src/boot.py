@@ -4,16 +4,20 @@ import numpy as np
 import tqdm as tqdm
 
 class Model(nn.Module):
-    def __init__(self, y, B, nhidden):
+    def __init__(self, n, J, nhidden):
         super(Model, self).__init__()
-        n = len(y)
-        J = B.size()[1]
+        # if y is a vector, suppose it has been added 1 dim such that the batch size = 1.
+        # n = len(y[0])
+        # n, J = B.size()
         self.MLP = nn.Sequential(
             nn.Linear(n, nhidden),
+            # nn.BatchNorm1d(nhidden),
             nn.ReLU(),
             nn.Linear(nhidden, nhidden),
+            # nn.BatchNorm1d(nhidden),
             nn.ReLU(),
             nn.Linear(nhidden, nhidden),
+            # nn.BatchNorm1d(nhidden),
             nn.ReLU(),
             nn.Linear(nhidden, J)
         )
@@ -25,14 +29,14 @@ class Model(nn.Module):
 
 # two different optimizers
 # support lambda
-def train_G(y, B, L, lam, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta0 = 0.0001, gamma = 0.9, sigma = 1, amsgrad = False, decay_step = 1000):
+def train_G(y, B, L, lam, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta0 = 0.0001, gamma = 0.9, sigma = 1, amsgrad = False, decay_step = 1000, max_norm = 2.0, clip_ratio = 1.0):
     #
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    y = torch.from_numpy(y).to(device)
+    y = torch.from_numpy(y[None, :]).to(device)
     B = torch.from_numpy(B).to(device)
     L = torch.from_numpy(L).to(device)
     n, J = B.size()
-    model = Model(y, B, nhidden).to(device)
+    model = Model(n, J, nhidden).to(device)
     opt1 = torch.optim.Adam(model.parameters(), lr = eta0, amsgrad = amsgrad)
     opt2 = torch.optim.Adam(model.parameters(), lr = eta, amsgrad = amsgrad)
     sch1 = torch.optim.lr_scheduler.StepLR(opt1, gamma = gamma, step_size = decay_step)
@@ -44,15 +48,17 @@ def train_G(y, B, L, lam, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta
     # for epoch in range(nepoch):
     for epoch in pbar:
         ## first step
-        beta = model(y) # 1xJ
+        beta = model(y) # 1xJ (actually just array vector if not expanding dim)
         ypred = torch.matmul(beta, B.t())
-        # not directly use sum on the penalty loss, so pay attention whether the loss has scaled by n
+        # not directly use sum on the penalty loss, so pay attention the loss has scaled by J
         # ...........................................................1xJ x JxJ
         # note that it should be L' * beta, so TODO: double check whether a transpose is necessary
         loss1_fit = loss_fn(ypred, y)
-        loss1 = loss1_fit + lam * torch.square(torch.matmul(beta, L)).mean() 
+        loss1 = loss1_fit + lam * torch.square(torch.matmul(beta, L)).mean() * J
         opt1.zero_grad()
         loss1.backward()
+        nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_norm)
+        # nn.utils.clip_grad_value_(model.parameters(), max_norm)
         opt1.step()
         sch1.step()
         #
@@ -60,6 +66,7 @@ def train_G(y, B, L, lam, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta
         ## second step
         epsilons = torch.randn((K, n)).to(device) * sigma
         #        1xn      +      Kxn
+        # https://pytorch.org/docs/master/notes/broadcasting.html#broadcasting-semantics
         ytrain = ypred.detach() + epsilons 
         betas = model(ytrain) # K x J
         yspred = torch.matmul(betas, B.t()) # KxJ x Jxn
@@ -68,6 +75,8 @@ def train_G(y, B, L, lam, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta
         #
         opt2.zero_grad()
         loss2.backward()
+        nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_norm * clip_ratio)
+        # nn.utils.clip_grad_value_(model.parameters(), max_norm)
         opt2.step()
         sch2.step()
         #

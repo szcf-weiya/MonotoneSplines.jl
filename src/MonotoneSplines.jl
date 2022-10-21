@@ -19,6 +19,8 @@ function __init__()
     copy!(_py_boot, pyimport("boot"))
 end
 
-export check_CI
+export check_CI,
+        cubic,
+        logit
 
 end # module MonotoneSplines

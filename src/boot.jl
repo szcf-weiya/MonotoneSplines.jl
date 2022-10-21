@@ -16,12 +16,13 @@ logit(x) = 1/(1+exp(-x))
 
 function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200, 
                         K = 10, nrep = 100, α = 0.05, C = 1, patience = 3, η = 0.001, method = "pytorch",
-                        λ = 0.1,
+                        λ = 0.1, cvλ = false, λs = exp.(range(-10, -4, length = 100)),
                         amsgrad = true,
                         γ = 0.9,
                         η0 = 0.0001,
+                        max_norm = 2.0, clip_ratio = 1.0,
                         decay_step = Int(1 / η),
-                        fig = true
+                        fig = true, figfolder = "~"
                         )
     timestamp = replace(strip(read(`date -Iseconds`, String)), ":" => "_")
     res_covprob = zeros(nrep) # 
@@ -32,13 +33,20 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
         x = rand(n) * 2 .- 1
         y = f.(x) + randn(n) * σ    
         B, Bnew, L, J = build_model(x, true)
-        βhat0, yhat0 = mono_ss(x, y, λ);
+        if cvλ
+            errs, _, _, _ = cv_mono_ss(x, y, λs)
+            λopt = λs[argmin(errs)]
+            βhat0, yhat0 = mono_ss(x, y, λopt)
+            λ = λopt  / n # TODO: since LOSS + λopt Penalty, then LOSS / n + λ / n * Penalty
+        else
+            βhat0, yhat0 = mono_ss(x, y, λ);
+        end
         # err0 = Flux.Losses.mse(yhat, y)
         σ0 = lm(x, y)
         res_time[i] = @elapsed begin
             if method == "pytorch"
                 #Ghat = py_train_G(y, B, K = K, nepoch = nepoch, η = η, σ = σ0)
-                Ghat = py_train_G(y, B, L, λ, K = K, nepoch = nepoch, η = η, σ = σ0, figname = ifelse(fig, "loss-$f-$i.png", nothing), amsgrad = amsgrad, γ = γ, η0 = η0, decay_step = decay_step)
+                Ghat = py_train_G(y, B, L, λ, K = K, nepoch = nepoch, η = η, σ = σ0, figname = ifelse(fig, "$figfolder/loss-$f-$i.png", nothing), amsgrad = amsgrad, γ = γ, η0 = η0, decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio)
             elseif method == "jl_lambda"
                 Ghat = train_G(x, y, B, L, λ, K = K, σ = σ0, nepoch = nepoch, nB = nB, η = η)
             else
@@ -56,11 +64,19 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
         # # res[i] = coverage_prob(B * CI, f.(x)) 
         # YCI = hcat([quantile(t, [α/2, 1-α/2]) for t in eachrow(Yhat)]...)'
         # res[i] = coverage_prob(YCI, f.(x)) 
-        res_covprob[i], yhat = sample_G(Ghat, B, x, y, f, nB = nB, figname = ifelse(fig, "fit-$f-$i.png", nothing))
+        res_covprob[i], yhat = sample_G(Ghat, B, x, y, f, nB = nB, figname = ifelse(fig, "$figfolder/fit-$f-$i.png", nothing))
         res_err[i, :] = [Flux.Losses.mse(yhat0, yhat),
                         Flux.Losses.mse(yhat0, f.(x)),
                         Flux.Losses.mse(yhat, f.(x))
                         ]
+        if fig
+            if cvλ
+                savefig(plot(log.(λs), log.(errs)), "$figfolder/cv-$f-$i.png")
+                run(`ssh sandbox convert $figfolder/cv-$f-$i.png $figfolder/fit-$f-$i.png $figfolder/loss-$f-$i.png +append $figfolder/$f-$i.png`)
+            else
+                run(`ssh sandbox convert $figfolder/fit-$f-$i.png $figfolder/loss-$f-$i.png +append $figfolder/$f-$i.png`)
+            end
+        end                    
     end
     serialize("$f-n$n-σ$σ-nrep$nrep-B$nB-K$K-λ$λ-η$η-nepoch$nepoch-$timestamp.sil", [res_covprob, res_err, res_time])
     return mean(res_covprob), mean(res_err, dims=1), mean(res_time)
@@ -333,12 +349,13 @@ function py_train_G(y::AbstractVector, B::AbstractMatrix, L::AbstractMatrix, λ:
                             η = 0.001, η0 = 0.0001, K = 10, nepoch = 100, σ = 1.0, 
                             amsgrad = false,
                             γ = 0.9,
+                            max_norm = 2.0, clip_ratio = 1.0,
                             decay_step = Int(1 / η),
                             figname = "pyloss.png" # not plot if nothing
                             )
     # Ghat, LOSS1, LOSS2 = py"train_G"(Float32.(y), Float32.(B), eta = η, K = K, nepoch = nepoch, sigma = σ)
     # Ghat, LOSS = py"train_G"(Float32.(y), Float32.(B), Float32.(L), λ, eta = η, K = K, nepoch = nepoch, sigma = σ)
-    Ghat, LOSS = _py_boot."train_G"(Float32.(y), Float32.(B), Float32.(L), λ, eta = η, K = K, nepoch = nepoch, sigma = σ, amsgrad = amsgrad, gamma = γ, eta0 = η0, decay_step = decay_step)
+    Ghat, LOSS = _py_boot."train_G"(Float32.(y), Float32.(B), Float32.(L), λ, eta = η, K = K, nepoch = nepoch, sigma = σ, amsgrad = amsgrad, gamma = γ, eta0 = η0, decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio)
     # savefig(plot(
     #     # plot(log.(LOSS1)),
     #     # plot(log.(LOSS2)),
