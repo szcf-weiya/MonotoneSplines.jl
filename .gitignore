@@ -4,3 +4,4 @@ Manifest.toml
 */__pycache__/
 *.sil
 *.png
+docs/build
