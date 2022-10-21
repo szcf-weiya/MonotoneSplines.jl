@@ -1,0 +1,45 @@
+name: CI
+
+on: [push]
+
+jobs:
+  docs:
+    name: Documentation
+    runs-on: ubuntu-18.04
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install R
+        run: |
+          sudo apt-get install lsb-release
+          sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys E298A3A825C0D65DFD57CBB651716619E084DAB9
+          sudo add-apt-repository "deb https://cloud.r-project.org/bin/linux/ubuntu $(lsb_release -c -s)-cran35/"
+          sudo apt update
+          sudo apt install r-base
+          sudo apt install libcurl4-openssl-dev
+          sudo apt-get install libmpfr-dev
+
+      # https://github.com/szcf-weiya/Cell-Video/commit/8b81175b4d503057f59f809d05fb3707cc9f3d28#comments
+      - name: Install Dependencies for R
+        run: |
+          install.packages("remotes")
+          remotes::install_github("szcf-weiya/prin_curve", auth_token="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")
+          install.packages("CVXR")
+          install.packages("fda")
+          install.packages("lsei")
+          install.packages("Iso")
+          install.packages("cobs")
+          install.packages("splines")
+          install.packages("monmlp")
+        shell: sudo Rscript {0}
+
+      - uses: julia-actions/setup-julia@latest
+        with:
+          version: '1.7'
+      - name: Install dependencies
+        run: julia --project=docs/ -e 'using Pkg; Pkg.add(url="https://github.com/szcf-weiya/Xfunc.jl"); Pkg.develop(PackageSpec(path=pwd())); Pkg.instantiate()'
+      - name: Build and deploy
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # If authenticating with GitHub Actions token
+          # DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }} # If authenticating with SSH deploy key
+          GKSwstype: "100" #https://juliadocs.github.io/Documenter.jl/stable/man/syntax/#@example-block
+        run: julia --project=docs/ docs/make.jl

@@ -3,6 +3,24 @@ using StatsBase
 using LinearAlgebra # for 1.0I
 
 """
+    gen_data(n, σ, f::Union{Function, String}; xmin = -1, xmax = 1, k = 10)
+
+Generate `n` data points `(xi, yi)` from curve `f` with noise level `σ`, i.e., `yi = f(xi) + N(0, σ^2)`.
+
+It returns four vectors, `x, y, x0, y0`, where
+
+- `x, y`: pair points of length `n`.
+- `x0, y0`: true curve without noise, represented by `k*n` points.
+"""
+function gen_data(n::Int, σ::Real, f::Function; k=10, xmin = -1, xmax = 1)
+    x0 = sort(rand(k*n-(k-1)) * (xmax - xmin) .+ xmin)
+    y0 = f.(x0)
+    x = x0[1:k:end]
+    y = y0[1:k:end] + randn(n) * σ
+    return x, y, x0, y0
+end
+
+"""
     div_into_folds(N::Int; K = 10, seed = 1234)
 
 Equally divide `1:N` into `K` folds with random seed `seed`. If `seed` is negative, it is a non-random division, where the `i`-th fold would be the `i`-th equidistant range.
