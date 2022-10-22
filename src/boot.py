@@ -29,10 +29,12 @@ class Model(nn.Module):
 
 # two different optimizers
 # support lambda
-def train_G(y, B, L, lam, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta0 = 0.0001, gamma = 0.9, sigma = 1, amsgrad = False, decay_step = 1000, max_norm = 2.0, clip_ratio = 1.0):
+def train_G(y, B, L, lam, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta0 = 0.0001, gamma = 0.9, sigma = 1, amsgrad = False, decay_step = 1000, max_norm = 2.0, clip_ratio = 1.0, debug_with_y0 = False, y0 = 0):
     #
     device = "cuda" if torch.cuda.is_available() else "cpu"
     y = torch.from_numpy(y[None, :]).to(device)
+    if debug_with_y0:
+        y0 = torch.from_numpy(y0[None, :]).to(device)
     B = torch.from_numpy(B).to(device)
     L = torch.from_numpy(L).to(device)
     n, J = B.size()
@@ -55,23 +57,28 @@ def train_G(y, B, L, lam, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta
         # note that it should be L' * beta, so TODO: double check whether a transpose is necessary
         loss1_fit = loss_fn(ypred, y)
         loss1 = loss1_fit + lam * torch.square(torch.matmul(beta, L)).mean() * J
-        opt1.zero_grad()
-        loss1.backward()
-        nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_norm)
-        # nn.utils.clip_grad_value_(model.parameters(), max_norm)
-        opt1.step()
-        sch1.step()
-        #
-        sigma = torch.std(ypred.detach() - y, unbiased = True)
+        if not debug_with_y0:
+            opt1.zero_grad()
+            loss1.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_norm)
+            # nn.utils.clip_grad_value_(model.parameters(), max_norm)
+            opt1.step()
+            sch1.step()
+            #
+            sigma = torch.std(ypred.detach() - y, unbiased = True)
         ## second step
+        if debug_with_y0:
+            sigma = torch.std(y0 - y, unbiased = True)
         epsilons = torch.randn((K, n)).to(device) * sigma
         #        1xn      +      Kxn
         # https://pytorch.org/docs/master/notes/broadcasting.html#broadcasting-semantics
         ytrain = ypred.detach() + epsilons 
+        if debug_with_y0:
+            ytrain = y0 + epsilons 
         betas = model(ytrain) # K x J
         yspred = torch.matmul(betas, B.t()) # KxJ x Jxn
         # ...............................................................KxJ x JxJ
-        loss2 = loss_fn(yspred, ytrain) + lam * torch.square(torch.matmul(betas, L)).mean() 
+        loss2 = loss_fn(yspred, ytrain) + lam * torch.square(torch.matmul(betas, L)).mean() * J
         #
         opt2.zero_grad()
         loss2.backward()

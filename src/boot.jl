@@ -21,7 +21,8 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
                         γ = 0.9,
                         η0 = 0.0001,
                         max_norm = 2.0, clip_ratio = 1.0,
-                        decay_step = Int(1 / η),
+                        debug_with_y0 = false,
+                        decay_step = round(Int, 1 / η),
                         fig = true, figfolder = "~"
                         )
     timestamp = replace(strip(read(`date -Iseconds`, String)), ":" => "_")
@@ -46,7 +47,8 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
         res_time[i] = @elapsed begin
             if method == "pytorch"
                 #Ghat = py_train_G(y, B, K = K, nepoch = nepoch, η = η, σ = σ0)
-                Ghat = py_train_G(y, B, L, λ, K = K, nepoch = nepoch, η = η, σ = σ0, figname = ifelse(fig, "$figfolder/loss-$f-$i.png", nothing), amsgrad = amsgrad, γ = γ, η0 = η0, decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio)
+                Ghat = py_train_G(y, B, L, λ, K = K, nepoch = nepoch, η = η, σ = σ0, figname = ifelse(fig, "$figfolder/loss-$f-$i.png", nothing), amsgrad = amsgrad, γ = γ, η0 = η0, decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio,
+                debug_with_y0 = debug_with_y0, y0 = f.(x))
             elseif method == "jl_lambda"
                 Ghat = train_G(x, y, B, L, λ, K = K, σ = σ0, nepoch = nepoch, nB = nB, η = η)
             else
@@ -351,11 +353,12 @@ function py_train_G(y::AbstractVector, B::AbstractMatrix, L::AbstractMatrix, λ:
                             γ = 0.9,
                             max_norm = 2.0, clip_ratio = 1.0,
                             decay_step = Int(1 / η),
+                            debug_with_y0 = false, y0 = 0, 
                             figname = "pyloss.png" # not plot if nothing
                             )
     # Ghat, LOSS1, LOSS2 = py"train_G"(Float32.(y), Float32.(B), eta = η, K = K, nepoch = nepoch, sigma = σ)
     # Ghat, LOSS = py"train_G"(Float32.(y), Float32.(B), Float32.(L), λ, eta = η, K = K, nepoch = nepoch, sigma = σ)
-    Ghat, LOSS = _py_boot."train_G"(Float32.(y), Float32.(B), Float32.(L), λ, eta = η, K = K, nepoch = nepoch, sigma = σ, amsgrad = amsgrad, gamma = γ, eta0 = η0, decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio)
+    Ghat, LOSS = _py_boot."train_G"(Float32.(y), Float32.(B), Float32.(L), λ, eta = η, K = K, nepoch = nepoch, sigma = σ, amsgrad = amsgrad, gamma = γ, eta0 = η0, decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, debug_with_y0 = debug_with_y0, y0 = Float32.(y0))
     # savefig(plot(
     #     # plot(log.(LOSS1)),
     #     # plot(log.(LOSS2)),
