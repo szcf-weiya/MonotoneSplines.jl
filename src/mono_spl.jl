@@ -186,7 +186,12 @@ function cv_mono_ss(x::AbstractVector{T}, y::AbstractVector{T}, λs = exp.(-6:0.
         train_idx = setdiff(1:n, test_idx)
         for (i, λ) in enumerate(λs)
             βhat, _ = mono_ss(B[train_idx, :], y[train_idx], L, J, λ)
-            err[k, i] = norm(B[test_idx, :] * βhat - y[test_idx])^2
+            if isnothing(βhat)
+                @warn "βhat is estimated as nothing, so use average estimation for y"
+                err[k, i] = norm(y[test_idx] .- mean(y[train_idx]))^2
+            else
+                err[k, i] = norm(B[test_idx, :] * βhat - y[test_idx])^2
+            end
         end
     end
     return sum(err, dims = 1)[:] / n, B, L, J

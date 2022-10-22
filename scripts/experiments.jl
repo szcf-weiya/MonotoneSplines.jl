@@ -23,6 +23,14 @@ for σ in [0.01, 0.1, 0.2, 0.5]
     end
 end
 
+# cv true
+for σ in [0.01, 0.1, 0.2, 0.5, 1.0]
+    for f in [logit, logit5, exp, cubic]
+        check_CI(n=100, σ = σ, f = f, nrep = 20, η = 1e-5, nepoch=100000, K = 200, λ = 0.0, nB=10000, fig=false, cvλ = true, λs = exp.(range(-10, 0, length = 100)), γ = 1.0, η0 = 1e-7, max_norm=1, clip_ratio=1)
+    end
+end
+
+
 
 # rocky 2022-10-19 12:45:38
 for f in fs
