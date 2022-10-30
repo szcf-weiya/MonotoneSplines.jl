@@ -2,6 +2,7 @@ using Flux
 using Plots
 using PyCall
 using Serialization
+using Random
 
 # currentdir = @__DIR__
 # py"""
@@ -23,6 +24,8 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
                         max_norm = 2.0, clip_ratio = 1.0,
                         debug_with_y0 = false,
                         decay_step = round(Int, 1 / η),
+                        warm_up = 100, N1 = 100, N2 = 100,
+                        seed = 1234,
                         fig = true, figfolder = "~"
                         )
     timestamp = replace(strip(read(`date -Iseconds`, String)), ":" => "_")
@@ -31,8 +34,13 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
     res_err = zeros(nrep, 3)
     ## julia's progress bar has been overrideen by tqdm's progress bar
     for i = 1:nrep
-        x = rand(n) * 2 .- 1
-        y = f.(x) + randn(n) * σ    
+        if nrep == 1
+            x = rand(MersenneTwister(seed), n) * 2 .- 1
+            y = f.(x) + randn(MersenneTwister(seed), n) * σ    
+        else
+            x = rand(n) * 2 .- 1
+            y = f.(x) + randn(n) * σ    
+        end
         B, Bnew, L, J = build_model(x, true)
         if cvλ
             errs, _, _, _ = cv_mono_ss(x, y, λs)
@@ -48,7 +56,7 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
             if method == "pytorch"
                 #Ghat = py_train_G(y, B, K = K, nepoch = nepoch, η = η, σ = σ0)
                 Ghat = py_train_G(y, B, L, λ, K = K, nepoch = nepoch, η = η, σ = σ0, figname = ifelse(fig, "$figfolder/loss-$f-$i.png", nothing), amsgrad = amsgrad, γ = γ, η0 = η0, decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio,
-                debug_with_y0 = debug_with_y0, y0 = f.(x))
+                debug_with_y0 = debug_with_y0, y0 = f.(x), warm_up = warm_up, N1 = N1, N2 = N2)
             elseif method == "jl_lambda"
                 Ghat = train_G(x, y, B, L, λ, K = K, σ = σ0, nepoch = nepoch, nB = nB, η = η)
             else
@@ -354,11 +362,12 @@ function py_train_G(y::AbstractVector, B::AbstractMatrix, L::AbstractMatrix, λ:
                             max_norm = 2.0, clip_ratio = 1.0,
                             decay_step = Int(1 / η),
                             debug_with_y0 = false, y0 = 0, 
+                            warm_up = 100, N1 = 100, N2 = 100,
                             figname = "pyloss.png" # not plot if nothing
                             )
     # Ghat, LOSS1, LOSS2 = py"train_G"(Float32.(y), Float32.(B), eta = η, K = K, nepoch = nepoch, sigma = σ)
     # Ghat, LOSS = py"train_G"(Float32.(y), Float32.(B), Float32.(L), λ, eta = η, K = K, nepoch = nepoch, sigma = σ)
-    Ghat, LOSS = _py_boot."train_G"(Float32.(y), Float32.(B), Float32.(L), λ, eta = η, K = K, nepoch = nepoch, sigma = σ, amsgrad = amsgrad, gamma = γ, eta0 = η0, decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, debug_with_y0 = debug_with_y0, y0 = Float32.(y0))
+    Ghat, LOSS = _py_boot."train_G"(Float32.(y), Float32.(B), Float32.(L), λ, eta = η, K = K, nepoch = nepoch, sigma = σ, amsgrad = amsgrad, gamma = γ, eta0 = η0, decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, debug_with_y0 = debug_with_y0, y0 = Float32.(y0), warm_up = warm_up, N1 = N1, N2 = N2)
     # savefig(plot(
     #     # plot(log.(LOSS1)),
     #     # plot(log.(LOSS2)),
