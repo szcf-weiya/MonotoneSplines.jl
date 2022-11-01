@@ -20,6 +20,7 @@ function __init__()
 end
 
 export check_CI,
+       check_acc,
         cubic,
         logit
 

@@ -59,6 +59,9 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
                 debug_with_y0 = debug_with_y0, y0 = f.(x), warm_up = warm_up, N1 = N1, N2 = N2)
             elseif method == "jl_lambda"
                 Ghat = train_G(x, y, B, L, λ, K = K, σ = σ0, nepoch = nepoch, nB = nB, η = η)
+            elseif method == "lambda"
+                Ghat = py_train_G_lambda(y, B, L, K = K, nepoch = nepoch, η = η, σ = σ0, figname = ifelse(fig, "$figfolder/loss-$f-$i.png", nothing), amsgrad = amsgrad, γ = γ, η0 = η0, decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio,
+                debug_with_y0 = debug_with_y0, y0 = f.(x), warm_up = warm_up, N1 = N1, N2 = N2, λl = λs[1]/n, λu = λs[end]/n)
             else
                 Ghat = train_G2(x, y, B; K = K, σ = σ0, nepoch = nepoch, nB = nB, C = C, patience = patience, η = η) 
             end
@@ -74,11 +77,15 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
         # # res[i] = coverage_prob(B * CI, f.(x)) 
         # YCI = hcat([quantile(t, [α/2, 1-α/2]) for t in eachrow(Yhat)]...)'
         # res[i] = coverage_prob(YCI, f.(x)) 
-        res_covprob[i], yhat = sample_G(Ghat, B, x, y, f, nB = nB, figname = ifelse(fig, "$figfolder/fit-$f-$i.png", nothing))
-        res_err[i, :] = [Flux.Losses.mse(yhat0, yhat),
-                        Flux.Losses.mse(yhat0, f.(x)),
-                        Flux.Losses.mse(yhat, f.(x))
-                        ]
+        if method == "lambda"
+            sample_G_λ(Ghat, B, x, y, f, λs/n, nB = nB, figname = ifelse(fig, "$figfolder/fit-$f-$i.png", nothing))
+        else
+            res_covprob[i], yhat = sample_G(Ghat, B, x, y, f, nB = nB, figname = ifelse(fig, "$figfolder/fit-$f-$i.png", nothing))
+            res_err[i, :] = [Flux.Losses.mse(yhat0, yhat),
+                            Flux.Losses.mse(yhat0, f.(x)),
+                            Flux.Losses.mse(yhat, f.(x))
+                            ]    
+        end
         if fig
             if cvλ
                 savefig(plot(log.(λs), log.(errs)), "$figfolder/cv-$f-$i.png")
@@ -90,6 +97,60 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
     end
     serialize("$f-n$n-σ$σ-nrep$nrep-B$nB-K$K-λ$λ-η$η-nepoch$nepoch-$timestamp.sil", [res_covprob, res_err, res_time])
     return mean(res_covprob), mean(res_err, dims=1), mean(res_time)
+end
+
+function check_acc(; n = 100, σ = 0.1, f = exp, 
+                        nrep = 10,
+                        M = 10,
+                        λs = exp.(range(-10, -4, length = 100)),
+                        niter = 10000,
+                        η0 = 1e-4, η = 1e-3,
+                        max_norm = 2.0, clip_ratio = 1.0, decay_step=1000, amsgrad = true, γ = 1.0,
+                        fig = true, figfolder = "~"
+                        )
+    timestamp = replace(strip(read(`date -Iseconds`, String)), ":" => "_")
+    nλ = length(λs)
+    res_time = zeros(nrep, 3)
+    res_err = zeros(nrep, nλ, 3)
+    Yhat0 = zeros(nλ, n)
+    for i = 1:nrep
+        x = rand(n) * 2 .- 1
+        y = f.(x) + randn(n) * σ    
+        B, Bnew, L, J = build_model(x, true)
+        res_time[i, 1] = @elapsed for (j, λ) in enumerate(λs)
+            βhat0, yhat0 = mono_ss(x, y, λ)
+            Yhat0[j, :] = yhat0
+        end
+        res_time[i, 2] = @elapsed Ghat = py_train_G_lambda(y, B, L, K = M, nepoch = 0, η = η, 
+                                                            figname = ifelse(fig, "$figfolder/loss-$f-$i.png", nothing), 
+                                                            amsgrad = amsgrad, γ = γ, η0 = η0, 
+                                                            decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, warm_up = niter, λl = λs[1], λu = λs[end])
+        if fig
+            fitfig = scatter(x, y, legend=:topleft, label="")
+            idx = sortperm(x)
+        end
+        res_time[i, 3] = @elapsed for (j, λ) in enumerate(λs)
+            λ_aug = [λ, cbrt(λ), exp(λ), sqrt(λ), log(λ), 10*λ, λ^2, λ^3]
+            yhat = B * Ghat(vcat(y, λ_aug))
+            res_err[i, j, :] .= [Flux.Losses.mse(Yhat0[j, :], yhat),
+                                    Flux.Losses.mse(Yhat0[j, :], f.(x)),
+                                    Flux.Losses.mse(yhat, f.(x))
+                                ]
+            if fig
+                plot!(fitfig, x[idx], yhat[idx], label = "λ = $λ")
+            end
+        end
+        if fig
+            savefig(fitfig, "$figfolder/fit-$f-$i.png")
+            if strip(read(`hostname`, String)) == "chpc-gpu019"
+                run(`ssh sandbox convert $figfolder/fit-$f-$i.png $figfolder/loss-$f-$i.png +append $figfolder/$f-$i.png`)
+            else # on rocky
+                run(`convert $figfolder/fit-$f-$i.png $figfolder/loss-$f-$i.png +append $figfolder/$f-$i.png`)
+            end
+        end
+    end
+    serialize("acc-$f-n$n-σ$σ-nrep$nrep-M$M-η$η-niter$niter-$timestamp.sil", [res_err, res_time])
+    return mean(res_err, dims=1)[1,:,:]#, mean(res_time)
 end
 
 function train_G(rawx, rawy, rawB, rawL, λ;  nepoch = 100, σ = 0.1, K = 10, 
@@ -333,6 +394,36 @@ function sample_G(G, B::AbstractMatrix{T}, x::AbstractVector{T}, y::AbstractVect
     return cp, yhat
 end
 
+function sample_G_λ(G, B::AbstractMatrix{T}, x::AbstractVector{T}, y::AbstractVector{T}, f::Function, λs::AbstractVector{T}; 
+                        device = cpu, nB = 100, α = 0.05, figname = "cubic.png") where T <: AbstractFloat
+    if !isnothing(figname)
+        fig = scatter(x, y, legend=:topleft, label="")
+    end
+    for (i, λ) in enumerate(λs)
+        γhat = G(vcat(y, [λ, cbrt(λ), exp(λ), sqrt(λ), log(λ), 10*λ, λ^2, λ^3])) 
+        yhat = B * γhat
+    #σhat = std(y - yhat)
+    #n = length(y)
+    #Γhat = hcat([G(B * γhat + device(randn(n) * σhat) ) for _ in 1:nB]...)
+    #Yhat = B * Γhat
+        idx = sortperm(x)
+    #YCI = hcat([quantile(t, [α/2, 1-α/2]) for t in eachrow(Yhat)]...)'
+    #cp = coverage_prob(YCI, f.(x))
+        if !isnothing(figname)
+        #    plot(x[idx], Yhat[idx,:], legend = false, title = "B = $nB, Cov = $cp")
+            # scatter!(x, y)
+            plot!(fig, x[idx], yhat[idx], label = "λ = $λ")
+            # plot!(x[idx], YCI[idx,:], lw = 2)
+            savefig(figname[1:end-4] * "-$i.png")
+        end
+    end
+    if !isnothing(figname)
+        savefig(figname)
+    end
+    # return cp, yhat
+end
+
+
 # https://github.com/szcf-weiya/CrossValidation/blob/e4a7c41538842434accc32d1d9f71fc4ed4d5278/src/sim.jl#L979
 function lm(x::AbstractVector, y::AbstractVector)
     μ = mean(x)
@@ -374,6 +465,26 @@ function py_train_G(y::AbstractVector, B::AbstractMatrix, L::AbstractMatrix, λ:
     # ), "pyloss.png")
     if !isnothing(figname)
         savefig(plot(log.(LOSS),title = "λ = $λ"), figname)
+    end
+    return y -> py"$Ghat"(Float32.(y))
+end
+
+function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatrix; 
+                            η = 0.001, η0 = 0.0001, K = 10, nepoch = 100, σ = 1.0, 
+                            amsgrad = false,
+                            γ = 0.9,
+                            max_norm = 2.0, clip_ratio = 1.0,
+                            decay_step = Int(1 / η),
+                            debug_with_y0 = false, y0 = 0, 
+                            warm_up = 100, N1 = 100, N2 = 100,
+                            λl = 1e-9, λu = 1e-4,
+                            figname = "pyloss.png" # not plot if nothing
+                            )
+    # Ghat, LOSS1, LOSS2 = py"train_G"(Float32.(y), Float32.(B), eta = η, K = K, nepoch = nepoch, sigma = σ)
+    # Ghat, LOSS = py"train_G"(Float32.(y), Float32.(B), Float32.(L), λ, eta = η, K = K, nepoch = nepoch, sigma = σ)
+    Ghat, LOSS = _py_boot."train_G_lambda"(Float32.(y), Float32.(B), Float32.(L), eta = η, K = K, nepoch = nepoch, sigma = σ, amsgrad = amsgrad, gamma = γ, eta0 = η0, decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, debug_with_y0 = debug_with_y0, y0 = Float32.(y0), warm_up = warm_up, N1 = N1, N2 = N2, lam_lo = λl, lam_up = λu)
+    if !isnothing(figname)
+        savefig(plot(log.(LOSS)), figname)
     end
     return y -> py"$Ghat"(Float32.(y))
 end

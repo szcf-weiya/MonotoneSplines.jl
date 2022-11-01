@@ -24,6 +24,7 @@ class Model(nn.Module):
         )
     def forward(self, y):
         beta_unsort = self.MLP(y)
+        # return beta_unsort
         beta, indices = torch.sort(beta_unsort)
         return beta
 
@@ -98,7 +99,6 @@ def train_G(y, B, L, lam, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta
         # ypred = torch.matmul(beta, B.t()).detach() # update for next iteration in step 2
         ypred = torch.matmul(beta, B.t()).clone().detach() # update for next iteration in step 2
         sigma = torch.std(ypred - y, unbiased = True)
-
         for i in pbar2:
             # beta = model(y)
             # ypred = torch.matmul(beta, B.t()) # update for next iteration in step 2
@@ -124,14 +124,18 @@ def train_G(y, B, L, lam, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta
 #            sigma = torch.std(yspred.detach() - y, axis = 0, unbiased = True)
             # sigma = torch.mean(torch.abs(yspred.detach() - y), axis = 0) * np.sqrt(np.pi / 2)
             # pbar2.set_postfix(i = i, loss = loss2.item(), sigmas = [torch.min(sigma), torch.mean(sigma), torch.max(sigma)])
+            run_mean = torch.mean(LOSS[epoch*n12:epoch*n12+i+1, 1]) # account for the sudden change after step 1
             if N2 >= 100:
-                pbar2.set_postfix(i = i, loss = loss2.item(), sigma = sigma)
+                pbar2.set_postfix(i = i, loss = loss2.item(), running_mean = run_mean, sigma = sigma)
             #
         # LOSS[epoch, 0] = loss1.item()
         # LOSS[epoch, 1] = loss2.item()
         # print(f"epoch = {epoch}, loss = {LOSS[epoch,]}, sigma = {sigma}")
         # pickle.dump([yspred.cpu().detach().numpy(), ypred.cpu().detach().numpy(), y.cpu().detach().numpy()], open("debug-boot.pl", "wb"))
-        pbar.set_postfix(epoch = epoch, loss = LOSS[epoch*N1,], lr1 = sch1.get_last_lr())
+        pbar.set_postfix(epoch = epoch, loss = [LOSS[epoch*n12+N1-1, 0], LOSS[epoch*n12+N2-1, 1]], run_mean = run_mean, lr1 = sch1.get_last_lr())
+        #if LOSS[epoch*n12+N2-1, 1] < LOSS[epoch*n12+N1-1, 0]:
+        if max(LOSS[epoch*n12+N2-1, 1], run_mean) < LOSS[epoch*n12+N1-1, 0] and LOSS[epoch*n12+N2-1, 1] < run_mean:
+            break
     #
     #
     # pickle.dump([beta.cpu().detach().numpy(), ypred.cpu().detach().numpy()], open("debug-boot-step2.pl", "wb"))
@@ -139,6 +143,84 @@ def train_G(y, B, L, lam, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta
     loss_warmup = LOSS0.cpu().detach().numpy()
     loss_boot = LOSS.cpu().detach().numpy()
     return G, np.r_[np.c_[loss_warmup, loss_warmup], loss_boot]
+
+def train_G_lambda(y, B, L, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta0 = 0.0001, gamma = 0.9, sigma = 1, amsgrad = False, decay_step = 1000, max_norm = 2.0, clip_ratio = 1.0, debug_with_y0 = False, y0 = 0, warm_up = 100, subsequent_steps = True, N1 = 100, N2 = 100, lam_lo = 1e-9, lam_up = 1e-4):
+    #
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    y = torch.from_numpy(y[None, :]).to(device)
+    if debug_with_y0:
+        y0 = torch.from_numpy(y0[None, :]).to(device)
+    B = torch.from_numpy(B).to(device)
+    L = torch.from_numpy(L).to(device)
+    n, J = B.size()
+    dim_lam = 8
+    model = Model(n+dim_lam, J, nhidden).to(device)
+    opt1 = torch.optim.Adam(model.parameters(), lr = eta0, amsgrad = amsgrad)
+    opt2 = torch.optim.Adam(model.parameters(), lr = eta, amsgrad = amsgrad)
+    sch1 = torch.optim.lr_scheduler.StepLR(opt1, gamma = gamma, step_size = decay_step)
+    sch2 = torch.optim.lr_scheduler.StepLR(opt2, gamma = gamma, step_size = decay_step)
+    loss_fn = nn.functional.mse_loss
+    # just realized that pytorch also did not do sort in batch
+    LOSS = torch.zeros(nepoch)
+    LOSS0 = torch.zeros(warm_up)
+    pbar0 = tqdm.trange(warm_up, desc="Training G (warm up)")
+    for epoch in pbar0:
+        lams = torch.rand((K, 1)).to(device) * (lam_up - lam_lo) + lam_lo
+        ys = torch.cat((y.repeat( (K, 1) ), lams, torch.pow(lams, 1/3), torch.exp(lams), torch.sqrt(lams), 
+                                             torch.log(lams), 10*lams, torch.square(lams), torch.pow(lams, 3)), dim = 1) # repeat works regardless of y has been augmented via `y[None, :]`
+        betas = model(ys)
+        ypred = torch.matmul(betas, B.t())
+        loss1_fit = loss_fn(ypred, y.repeat((K, 1)))
+        # loss1_fit = loss_fn(ypred, y) # throw a warning without repeat, but it should be fine
+        #                               Kx1               K x J
+        loss1 = loss1_fit + torch.mean(lams * torch.square(torch.matmul(betas, L))) * J / n
+        opt1.zero_grad()
+        loss1.backward()
+        nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_norm)
+        opt1.step()
+        LOSS0[epoch] = loss1.item()
+        pbar0.set_postfix(epoch = epoch, loss = loss1.item())
+
+    # G = lambda y: model(torch.from_numpy(y).to(device)).cpu().detach().numpy() # support y is Float32
+
+    # return G, LOSS0.cpu().detach().numpy()
+    pbar = tqdm.trange(nepoch, desc="Training G")
+    # for epoch in range(nepoch):
+    for epoch in pbar:
+        loss2 = 0
+        for i in range(K): # for each lam
+            lam = np.random.rand() * (lam_up - lam_lo) + lam_lo
+            aug_lam = torch.tensor([lam, lam**(1/3), np.exp(lam), np.sqrt(lam), np.log(lam), 10*lam, lam**2, lam**3], dtype=torch.float32).to(device)
+            ylam = torch.cat((y, aug_lam.repeat((1, 1))), dim=1)
+            beta = model(ylam)
+            ypred = torch.matmul(beta, B.t())
+            sigma = torch.std(ypred.detach() - y, unbiased = True)
+            epsilons = torch.randn((K, n)).to(device) * sigma
+
+            #        1xn      +      Kxn
+            # https://pytorch.org/docs/master/notes/broadcasting.html#broadcasting-semantics
+            # ytrain = ypred.detach() + epsilons  ## TODO: did ypred would be updated even if it put outside?
+            ytrain = ypred + epsilons
+            yslam = torch.cat((ytrain, aug_lam.repeat((K, 1)) ), dim=1)
+            betas = model(yslam) # K x J
+            yspred = torch.matmul(betas, B.t()) # KxJ x Jxn
+            # ...............................................................KxJ x JxJ
+            loss2 = loss2 + loss_fn(yspred, ytrain) + lam * torch.square(torch.matmul(betas, L)).mean() * J / n
+        #
+        opt2.zero_grad()
+        loss2.backward()
+        nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_norm * clip_ratio)
+        # nn.utils.clip_grad_value_(model.parameters(), max_norm)
+        opt2.step()
+        sch2.step()
+        LOSS[epoch] = loss2.item() / K
+        pbar.set_postfix(epoch = epoch, loss = LOSS[epoch])
+    #
+    # pickle.dump([beta.cpu().detach().numpy(), ypred.cpu().detach().numpy()], open("debug-boot-step2.pl", "wb"))
+    G = lambda y: model(torch.from_numpy(y).to(device)).cpu().detach().numpy() # support y is Float32
+    loss_warmup = LOSS0.cpu().detach().numpy()
+    loss_boot = LOSS.cpu().detach().numpy()
+    return G, np.r_[loss_warmup, loss_boot]
 
 def train_G_bp(y, B, L, lam, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta0 = 0.0001, gamma = 0.9, sigma = 1, amsgrad = False, decay_step = 1000, max_norm = 2.0, clip_ratio = 1.0, debug_with_y0 = False, y0 = 0, warm_up = 100, subsequent_steps = True):
     #
