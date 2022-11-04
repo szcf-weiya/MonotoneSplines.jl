@@ -105,6 +105,9 @@ function check_acc(; n = 100, σ = 0.1, f = exp,
                         λs = exp.(range(-10, -4, length = 100)),
                         niter = 10000,
                         η0 = 1e-4, η = 1e-3,
+                        seed = 1234,
+                        use_torchsort = false, sort_reg_strength = 0.1,
+                        gpu_id = 0,
                         max_norm = 2.0, clip_ratio = 1.0, decay_step=1000, amsgrad = true, γ = 1.0,
                         fig = true, figfolder = "~"
                         )
@@ -114,16 +117,24 @@ function check_acc(; n = 100, σ = 0.1, f = exp,
     res_err = zeros(nrep, nλ, 3)
     Yhat0 = zeros(nλ, n)
     for i = 1:nrep
-        x = rand(n) * 2 .- 1
-        y = f.(x) + randn(n) * σ    
+        if nrep == 1
+            x = rand(MersenneTwister(seed), n) * 2 .- 1
+            y = f.(x) + randn(MersenneTwister(seed), n) * σ        
+        else
+            x = rand(n) * 2 .- 1
+            y = f.(x) + randn(n) * σ        
+        end
         B, Bnew, L, J = build_model(x, true)
         res_time[i, 1] = @elapsed for (j, λ) in enumerate(λs)
             βhat0, yhat0 = mono_ss(x, y, λ)
             Yhat0[j, :] = yhat0
         end
         res_time[i, 2] = @elapsed Ghat = py_train_G_lambda(y, B, L, K = M, nepoch = 0, η = η, 
-                                                            figname = ifelse(fig, "$figfolder/loss-$f-$i.png", nothing), 
+                                                            figname = ifelse(fig, "$figfolder/loss-$f-$σ-$i.png", nothing), 
                                                             amsgrad = amsgrad, γ = γ, η0 = η0, 
+                                                            use_torchsort = use_torchsort,
+                                                            sort_reg_strength = sort_reg_strength,
+                                                            gpu_id = gpu_id,
                                                             decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, warm_up = niter, λl = λs[1], λu = λs[end])
         if fig
             fitfig = scatter(x, y, legend=:topleft, label="")
@@ -132,24 +143,25 @@ function check_acc(; n = 100, σ = 0.1, f = exp,
         res_time[i, 3] = @elapsed for (j, λ) in enumerate(λs)
             λ_aug = [λ, cbrt(λ), exp(λ), sqrt(λ), log(λ), 10*λ, λ^2, λ^3]
             yhat = B * Ghat(vcat(y, λ_aug))
-            res_err[i, j, :] .= [Flux.Losses.mse(Yhat0[j, :], yhat),
-                                    Flux.Losses.mse(Yhat0[j, :], f.(x)),
-                                    Flux.Losses.mse(yhat, f.(x))
-                                ]
+            rel_gap = Flux.Losses.mse(Yhat0[j, :], yhat) / Flux.Losses.mse(Yhat0[j, :], zeros(n))
+            fit_ratio = Flux.Losses.mse(yhat, y) / Flux.Losses.mse(Yhat0[j, :], y)
+            fit_ratio2 = Flux.Losses.mse(yhat, f.(x)) / Flux.Losses.mse(Yhat0[j, :], f.(x))
+            res_err[i, j, :] .= [rel_gap, fit_ratio, fit_ratio2]
             if fig
                 plot!(fitfig, x[idx], yhat[idx], label = "λ = $λ")
+                plot!(fitfig, x[idx], Yhat0[j, idx], label = "", ls = :dash)
             end
         end
         if fig
-            savefig(fitfig, "$figfolder/fit-$f-$i.png")
+            savefig(fitfig, "$figfolder/fit-$f-$σ-$i.png")
             if strip(read(`hostname`, String)) == "chpc-gpu019"
-                run(`ssh sandbox convert $figfolder/fit-$f-$i.png $figfolder/loss-$f-$i.png +append $figfolder/$f-$i.png`)
+                run(`ssh sandbox convert $figfolder/fit-$f-$σ-$i.png $figfolder/loss-$f-$σ-$i.png +append $figfolder/$f-$σ-$i.png`)
             else # on rocky
-                run(`convert $figfolder/fit-$f-$i.png $figfolder/loss-$f-$i.png +append $figfolder/$f-$i.png`)
+                run(`convert $figfolder/fit-$σ-$f-$i.png $figfolder/loss-$σ-$f-$i.png +append $figfolder/$f-$σ-$i.png`)
             end
         end
     end
-    serialize("acc-$f-n$n-σ$σ-nrep$nrep-M$M-η$η-niter$niter-$timestamp.sil", [res_err, res_time])
+    serialize("acc-$f-n$n-σ$σ-nrep$nrep-M$M-η0$η0-niter$niter-$timestamp.sil", [res_err, res_time])
     return mean(res_err, dims=1)[1,:,:]#, mean(res_time)
 end
 
@@ -478,13 +490,21 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
                             debug_with_y0 = false, y0 = 0, 
                             warm_up = 100, N1 = 100, N2 = 100,
                             λl = 1e-9, λu = 1e-4,
+                            use_torchsort = false,
+                            sort_reg_strength = 0.1,
+                            gpu_id = 0,
                             figname = "pyloss.png" # not plot if nothing
                             )
     # Ghat, LOSS1, LOSS2 = py"train_G"(Float32.(y), Float32.(B), eta = η, K = K, nepoch = nepoch, sigma = σ)
     # Ghat, LOSS = py"train_G"(Float32.(y), Float32.(B), Float32.(L), λ, eta = η, K = K, nepoch = nepoch, sigma = σ)
-    Ghat, LOSS = _py_boot."train_G_lambda"(Float32.(y), Float32.(B), Float32.(L), eta = η, K = K, nepoch = nepoch, sigma = σ, amsgrad = amsgrad, gamma = γ, eta0 = η0, decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, debug_with_y0 = debug_with_y0, y0 = Float32.(y0), warm_up = warm_up, N1 = N1, N2 = N2, lam_lo = λl, lam_up = λu)
+    # Ghat, LOSS 
+    py_ret = @pycall _py_boot."train_G_lambda"(Float32.(y), Float32.(B), Float32.(L), eta = η, K = K, nepoch = nepoch, sigma = σ, amsgrad = amsgrad, gamma = γ, eta0 = η0, decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, debug_with_y0 = debug_with_y0, y0 = Float32.(y0), warm_up = warm_up, N1 = N1, N2 = N2, lam_lo = λl, lam_up = λu, use_torchsort = use_torchsort,sort_reg_strength=sort_reg_strength, gpu_id = gpu_id)::Tuple{PyObject, PyArray}
+    println(typeof(py_ret)) #Tuple{PyCall.PyObject, Matrix{Float32}} 
+    # ....................... # Tuple{PyCall.PyObject, PyCall.PyArray{Float32, 2}}
     if !isnothing(figname)
+        LOSS = py_ret[2]
         savefig(plot(log.(LOSS)), figname)
     end
-    return y -> py"$Ghat"(Float32.(y))
+    # return y -> py"$Ghat"(Float32.(y))
+    return y -> py"$(py_ret[1])"(Float32.(y))
 end

@@ -3,13 +3,20 @@ import torch.nn as nn
 import numpy as np
 import tqdm as tqdm
 import pickle
+import torchsort
+# https://github.com/pytorch/pytorch/issues/45038#issuecomment-695793213
+# too slow
+# import os
+# os.environ['CUDA_LAUNCH_BLOCKING']='1'
 
 class Model(nn.Module):
-    def __init__(self, n, J, nhidden):
+    def __init__(self, n, J, nhidden, use_torchsort = False, sort_reg_strength = 0.1):
         super(Model, self).__init__()
         # if y is a vector, suppose it has been added 1 dim such that the batch size = 1.
         # n = len(y[0])
         # n, J = B.size()
+        self.use_torchsort = use_torchsort
+        self.sort_reg_strength = sort_reg_strength
         self.MLP = nn.Sequential(
             nn.Linear(n, nhidden),
             # nn.BatchNorm1d(nhidden),
@@ -24,16 +31,23 @@ class Model(nn.Module):
         )
     def forward(self, y):
         beta_unsort = self.MLP(y)
-        # return beta_unsort
-        beta, indices = torch.sort(beta_unsort)
+        if self.use_torchsort:
+            beta = torchsort.soft_sort(beta_unsort, regularization_strength=self.sort_reg_strength)
+        else:
+            beta, indices = torch.sort(beta_unsort)
         return beta
 
 
 # two different optimizers
 # support lambda
-def train_G(y, B, L, lam, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta0 = 0.0001, gamma = 0.9, sigma = 1, amsgrad = False, decay_step = 1000, max_norm = 2.0, clip_ratio = 1.0, debug_with_y0 = False, y0 = 0, warm_up = 100, subsequent_steps = True, N1 = 100, N2 = 100):
+def train_G(y, B, L, lam, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta0 = 0.0001, gamma = 0.9, sigma = 1, amsgrad = False, decay_step = 1000, max_norm = 2.0, clip_ratio = 1.0, debug_with_y0 = False, y0 = 0, warm_up = 100, subsequent_steps = True, N1 = 100, N2 = 100, gpu_id = 0):
     #
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    # device = "cuda" if torch.cuda.is_available() else "cpu"
+    if torch.cuda.is_available():
+        # torch.cuda.set_device(3)
+        device = f"cuda:{gpu_id}"
+    else:
+        device = "cpu"
     y = torch.from_numpy(y[None, :]).to(device)
     if debug_with_y0:
         y0 = torch.from_numpy(y0[None, :]).to(device)
@@ -144,9 +158,9 @@ def train_G(y, B, L, lam, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta
     loss_boot = LOSS.cpu().detach().numpy()
     return G, np.r_[np.c_[loss_warmup, loss_warmup], loss_boot]
 
-def train_G_lambda(y, B, L, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta0 = 0.0001, gamma = 0.9, sigma = 1, amsgrad = False, decay_step = 1000, max_norm = 2.0, clip_ratio = 1.0, debug_with_y0 = False, y0 = 0, warm_up = 100, subsequent_steps = True, N1 = 100, N2 = 100, lam_lo = 1e-9, lam_up = 1e-4):
+def train_G_lambda(y, B, L, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta0 = 0.0001, gamma = 0.9, sigma = 1, amsgrad = False, decay_step = 1000, max_norm = 2.0, clip_ratio = 1.0, debug_with_y0 = False, y0 = 0, warm_up = 100, subsequent_steps = True, N1 = 100, N2 = 100, lam_lo = 1e-9, lam_up = 1e-4, use_torchsort = False, sort_reg_strength = 0.1, gpu_id = 0):
     #
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu"
     y = torch.from_numpy(y[None, :]).to(device)
     if debug_with_y0:
         y0 = torch.from_numpy(y0[None, :]).to(device)
@@ -154,15 +168,16 @@ def train_G_lambda(y, B, L, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, e
     L = torch.from_numpy(L).to(device)
     n, J = B.size()
     dim_lam = 8
-    model = Model(n+dim_lam, J, nhidden).to(device)
+    model = Model(n+dim_lam, J, nhidden, use_torchsort, sort_reg_strength).to(device)
     opt1 = torch.optim.Adam(model.parameters(), lr = eta0, amsgrad = amsgrad)
     opt2 = torch.optim.Adam(model.parameters(), lr = eta, amsgrad = amsgrad)
     sch1 = torch.optim.lr_scheduler.StepLR(opt1, gamma = gamma, step_size = decay_step)
     sch2 = torch.optim.lr_scheduler.StepLR(opt2, gamma = gamma, step_size = decay_step)
     loss_fn = nn.functional.mse_loss
     # just realized that pytorch also did not do sort in batch
-    LOSS = torch.zeros(nepoch)
-    LOSS0 = torch.zeros(warm_up)
+    LOSS = torch.zeros(nepoch).to(device)
+    LOSS0 = torch.zeros(warm_up, 4).to(device)
+    query_lams = [lam_lo, lam_up, (lam_lo + lam_up) / 2]
     pbar0 = tqdm.trange(warm_up, desc="Training G (warm up)")
     for epoch in pbar0:
         lams = torch.rand((K, 1)).to(device) * (lam_up - lam_lo) + lam_lo
@@ -178,9 +193,15 @@ def train_G_lambda(y, B, L, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, e
         loss1.backward()
         nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_norm)
         opt1.step()
-        LOSS0[epoch] = loss1.item()
+        LOSS0[epoch, 0] = loss1.item()
         pbar0.set_postfix(epoch = epoch, loss = loss1.item())
-
+        for i in range(3):
+            lam = query_lams[i]
+            aug_lam = torch.tensor([lam, lam**(1/3), np.exp(lam), np.sqrt(lam), np.log(lam), 10*lam, lam**2, lam**3], dtype=torch.float32).to(device)
+            ylam = torch.cat((y, aug_lam.repeat((1, 1))), dim=1)
+            beta = model(ylam)
+            ypred = torch.matmul(beta, B.t())
+            LOSS0[epoch, i+1] = loss_fn(ypred, y) + lam * torch.square(torch.matmul(beta, L)).mean() * J / n
     # G = lambda y: model(torch.from_numpy(y).to(device)).cpu().detach().numpy() # support y is Float32
 
     # return G, LOSS0.cpu().detach().numpy()
@@ -217,10 +238,21 @@ def train_G_lambda(y, B, L, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, e
         pbar.set_postfix(epoch = epoch, loss = LOSS[epoch])
     #
     # pickle.dump([beta.cpu().detach().numpy(), ypred.cpu().detach().numpy()], open("debug-boot-step2.pl", "wb"))
-    G = lambda y: model(torch.from_numpy(y).to(device)).cpu().detach().numpy() # support y is Float32
+    # https://stackoverflow.com/a/43819235/
+    # https://github.com/pytorch/pytorch/blob/761d6799beb3afa03657a71776412a2171ee7533/docs/source/notes/serialization.rst
+    # torch.save(model.state_dict(), "model_G.pt") 
+    # model2 = Model(n+dim_lam, J, nhidden, use_torchsort, sort_reg_strength)
+    # model2.load_state_dict(torch.load("model_G.pt"))
+    G = lambda y: model(torch.from_numpy(y[None,:]).to(device)).cpu().detach().numpy().squeeze() # support y is Float32
+    # G = lambda y: model2(torch.from_numpy(y[None,:])).cpu().detach().numpy().squeeze() # support y is Float32
     loss_warmup = LOSS0.cpu().detach().numpy()
     loss_boot = LOSS.cpu().detach().numpy()
-    return G, np.r_[loss_warmup, loss_boot]
+    if nepoch == 0:
+        #ret_loss = loss_warmup[::10,:] # attempts to avoid StackOverflowError #120
+        ret_loss = loss_warmup
+    else:
+        ret_loss = np.r_[loss_warmup, loss_boot]
+    return G, ret_loss 
 
 def train_G_bp(y, B, L, lam, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta0 = 0.0001, gamma = 0.9, sigma = 1, amsgrad = False, decay_step = 1000, max_norm = 2.0, clip_ratio = 1.0, debug_with_y0 = False, y0 = 0, warm_up = 100, subsequent_steps = True):
     #
