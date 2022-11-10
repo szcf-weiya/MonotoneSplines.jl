@@ -38,8 +38,11 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
             x = rand(MersenneTwister(seed), n) * 2 .- 1
             y = f.(x) + randn(MersenneTwister(seed), n) * σ    
         else
-            x = rand(n) * 2 .- 1
-            y = f.(x) + randn(n) * σ    
+            seed = Int(rand(UInt8))
+            x = rand(MersenneTwister(seed), n) * 2 .- 1
+            y = f.(x) + randn(MersenneTwister(seed), n) * σ    
+            # x = rand(n) * 2 .- 1
+            # y = f.(x) + randn(n) * σ    
         end
         B, Bnew, L, J = build_model(x, true)
         if cvλ
@@ -108,6 +111,8 @@ function check_acc(; n = 100, σ = 0.1, f = exp,
                         seed = 1234,
                         use_torchsort = false, sort_reg_strength = 0.1,
                         gpu_id = 0,
+                        patience = 100, cooldown = 100,
+                        percent_warm_up = 10,
                         max_norm = 2.0, clip_ratio = 1.0, decay_step=1000, amsgrad = true, γ = 1.0,
                         fig = true, figfolder = "~"
                         )
@@ -121,8 +126,11 @@ function check_acc(; n = 100, σ = 0.1, f = exp,
             x = rand(MersenneTwister(seed), n) * 2 .- 1
             y = f.(x) + randn(MersenneTwister(seed), n) * σ        
         else
-            x = rand(n) * 2 .- 1
-            y = f.(x) + randn(n) * σ        
+            seed = Int(rand(UInt8))
+            x = rand(MersenneTwister(seed), n) * 2 .- 1
+            y = f.(x) + randn(MersenneTwister(seed), n) * σ    
+            # x = rand(n) * 2 .- 1
+            # y = f.(x) + randn(n) * σ        
         end
         B, Bnew, L, J = build_model(x, true)
         res_time[i, 1] = @elapsed for (j, λ) in enumerate(λs)
@@ -135,9 +143,11 @@ function check_acc(; n = 100, σ = 0.1, f = exp,
                                                             use_torchsort = use_torchsort,
                                                             sort_reg_strength = sort_reg_strength,
                                                             gpu_id = gpu_id,
+                                                            patience = patience, cooldown = cooldown,
+                                                            percent_warm_up = percent_warm_up,
                                                             decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, warm_up = niter, λl = λs[1], λu = λs[end])
         if fig
-            fitfig = scatter(x, y, legend=:topleft, label="")
+            fitfig = scatter(x, y, legend=:topleft, label="", title="seed = $seed")
             idx = sortperm(x)
         end
         res_time[i, 3] = @elapsed for (j, λ) in enumerate(λs)
@@ -487,6 +497,8 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
                             γ = 0.9,
                             max_norm = 2.0, clip_ratio = 1.0,
                             decay_step = Int(1 / η),
+                            patience = 100, cooldown=100,
+                            percent_warm_up = 10,
                             debug_with_y0 = false, y0 = 0, 
                             warm_up = 100, N1 = 100, N2 = 100,
                             λl = 1e-9, λu = 1e-4,
@@ -498,7 +510,7 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
     # Ghat, LOSS1, LOSS2 = py"train_G"(Float32.(y), Float32.(B), eta = η, K = K, nepoch = nepoch, sigma = σ)
     # Ghat, LOSS = py"train_G"(Float32.(y), Float32.(B), Float32.(L), λ, eta = η, K = K, nepoch = nepoch, sigma = σ)
     # Ghat, LOSS 
-    py_ret = @pycall _py_boot."train_G_lambda"(Float32.(y), Float32.(B), Float32.(L), eta = η, K = K, nepoch = nepoch, sigma = σ, amsgrad = amsgrad, gamma = γ, eta0 = η0, decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, debug_with_y0 = debug_with_y0, y0 = Float32.(y0), warm_up = warm_up, N1 = N1, N2 = N2, lam_lo = λl, lam_up = λu, use_torchsort = use_torchsort,sort_reg_strength=sort_reg_strength, gpu_id = gpu_id)::Tuple{PyObject, PyArray}
+    py_ret = @pycall _py_boot."train_G_lambda"(Float32.(y), Float32.(B), Float32.(L), eta = η, K = K, nepoch = nepoch, sigma = σ, amsgrad = amsgrad, gamma = γ, eta0 = η0, decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, debug_with_y0 = debug_with_y0, y0 = Float32.(y0), warm_up = warm_up, N1 = N1, N2 = N2, lam_lo = λl, lam_up = λu, use_torchsort = use_torchsort,sort_reg_strength=sort_reg_strength, gpu_id = gpu_id, patience=patience, cooldown=cooldown, percent_warm_up = percent_warm_up)::Tuple{PyObject, PyArray}
     println(typeof(py_ret)) #Tuple{PyCall.PyObject, Matrix{Float32}} 
     # ....................... # Tuple{PyCall.PyObject, PyCall.PyArray{Float32, 2}}
     if !isnothing(figname)

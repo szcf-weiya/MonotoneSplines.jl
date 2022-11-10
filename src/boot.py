@@ -158,7 +158,7 @@ def train_G(y, B, L, lam, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta
     loss_boot = LOSS.cpu().detach().numpy()
     return G, np.r_[np.c_[loss_warmup, loss_warmup], loss_boot]
 
-def train_G_lambda(y, B, L, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta0 = 0.0001, gamma = 0.9, sigma = 1, amsgrad = False, decay_step = 1000, max_norm = 2.0, clip_ratio = 1.0, debug_with_y0 = False, y0 = 0, warm_up = 100, subsequent_steps = True, N1 = 100, N2 = 100, lam_lo = 1e-9, lam_up = 1e-4, use_torchsort = False, sort_reg_strength = 0.1, gpu_id = 0):
+def train_G_lambda(y, B, L, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta0 = 0.0001, gamma = 0.9, sigma = 1, amsgrad = False, decay_step = 1000, max_norm = 2.0, clip_ratio = 1.0, debug_with_y0 = False, y0 = 0, warm_up = 100, subsequent_steps = True, N1 = 100, N2 = 100, lam_lo = 1e-9, lam_up = 1e-4, use_torchsort = False, sort_reg_strength = 0.1, gpu_id = 0, patience = 100, cooldown=100, percent_warm_up = 10):
     #
     device = f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu"
     y = torch.from_numpy(y[None, :]).to(device)
@@ -171,7 +171,8 @@ def train_G_lambda(y, B, L, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, e
     model = Model(n+dim_lam, J, nhidden, use_torchsort, sort_reg_strength).to(device)
     opt1 = torch.optim.Adam(model.parameters(), lr = eta0, amsgrad = amsgrad)
     opt2 = torch.optim.Adam(model.parameters(), lr = eta, amsgrad = amsgrad)
-    sch1 = torch.optim.lr_scheduler.StepLR(opt1, gamma = gamma, step_size = decay_step)
+    #sch1 = torch.optim.lr_scheduler.StepLR(opt1, gamma = gamma, step_size = decay_step)
+    sch1 = torch.optim.lr_scheduler.ReduceLROnPlateau(opt1, 'min', factor = gamma, patience = patience, cooldown = cooldown)
     sch2 = torch.optim.lr_scheduler.StepLR(opt2, gamma = gamma, step_size = decay_step)
     loss_fn = nn.functional.mse_loss
     # just realized that pytorch also did not do sort in batch
@@ -179,8 +180,12 @@ def train_G_lambda(y, B, L, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, e
     LOSS0 = torch.zeros(warm_up, 4).to(device)
     query_lams = [lam_lo, lam_up, (lam_lo + lam_up) / 2]
     pbar0 = tqdm.trange(warm_up, desc="Training G (warm up)")
+    stage_warm_up = warm_up // percent_warm_up
     for epoch in pbar0:
-        lams = torch.rand((K, 1)).to(device) * (lam_up - lam_lo) + lam_lo
+        if epoch < stage_warm_up:
+            lams = torch.ones((K, 1)).to(device) * lam_lo #* (lam_up + lam_lo) / 2
+        else:
+            lams = torch.rand((K, 1)).to(device) * (lam_up - lam_lo) + lam_lo
         ys = torch.cat((y.repeat( (K, 1) ), lams, torch.pow(lams, 1/3), torch.exp(lams), torch.sqrt(lams), 
                                              torch.log(lams), 10*lams, torch.square(lams), torch.pow(lams, 3)), dim = 1) # repeat works regardless of y has been augmented via `y[None, :]`
         betas = model(ys)
@@ -194,7 +199,6 @@ def train_G_lambda(y, B, L, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, e
         nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_norm)
         opt1.step()
         LOSS0[epoch, 0] = loss1.item()
-        pbar0.set_postfix(epoch = epoch, loss = loss1.item())
         for i in range(3):
             lam = query_lams[i]
             aug_lam = torch.tensor([lam, lam**(1/3), np.exp(lam), np.sqrt(lam), np.log(lam), 10*lam, lam**2, lam**3], dtype=torch.float32).to(device)
@@ -202,6 +206,9 @@ def train_G_lambda(y, B, L, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, e
             beta = model(ylam)
             ypred = torch.matmul(beta, B.t())
             LOSS0[epoch, i+1] = loss_fn(ypred, y) + lam * torch.square(torch.matmul(beta, L)).mean() * J / n
+        if epoch > cooldown and epoch > stage_warm_up:
+            sch1.step(LOSS0[epoch, 1:].mean())
+        pbar0.set_postfix(epoch = epoch, loss = loss1.item(), lr = opt1.param_groups[0]['lr'])
     # G = lambda y: model(torch.from_numpy(y).to(device)).cpu().detach().numpy() # support y is Float32
 
     # return G, LOSS0.cpu().detach().numpy()
