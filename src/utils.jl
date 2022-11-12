@@ -54,7 +54,7 @@ Partial code for picking knots in R's `smooth.spline`.
 The source code of `smooth.spline` can be directly accessed via typing `smooth.spline` is an R session. Note that there might be different in different R versions. The code is adapted based on R 3.6.3.
 """
 # refer to `smooth.spline`
-function pick_knots(x::AbstractVector{T}; tol = 1e-6 * iqr(x), all_knots = false, scaled = false) where T <: AbstractFloat
+function pick_knots(x::AbstractVector{T}; tol = 1e-6 * iqr(x), all_knots = false, scaled = false, prop_nknots = 1.0) where T <: AbstractFloat
     xx = round.(Int, (x .- mean(x)) / tol )
     # https://stackoverflow.com/questions/50899973/indices-of-unique-elements-of-vector-in-julia
     # unique index (Noted in techNotes)
@@ -65,8 +65,9 @@ function pick_knots(x::AbstractVector{T}; tol = 1e-6 * iqr(x), all_knots = false
     if all_knots
         nknots = nx
     else
-        nknots = Int(rcopy(R".nknots.smspl($nx)"))
+        nknots = round(Int, rcopy(R".nknots.smspl($nx)") * prop_nknots)
     end
+    nknots = max(4, nknots)
     idx = round.(Int, range(1, nx, length = nknots))
     if scaled
         rx = (ux[end] - ux[1])
@@ -129,9 +130,9 @@ function build_model(x::AbstractVector{T}, J::Int; xboundary = nothing, xnew = n
 end
 
 # smoothing splines
-function build_model(x::AbstractVector{T}, scaled::Bool; xboundary = nothing, all_knots = false, xnew = nothing, ε = (eps())^(1/3)) where T <: AbstractFloat
+function build_model(x::AbstractVector{T}, scaled::Bool; xboundary = nothing, all_knots = false, xnew = nothing, ε = (eps())^(1/3), prop_nknots = 1.0) where T <: AbstractFloat
     Bnew = nothing
-    knots, mx, rx, idx, idx0 = pick_knots(ifelse(isnothing(xboundary), x, vcat(x, xboundary)), all_knots = all_knots, scaled = scaled)
+    knots, mx, rx, idx, idx0 = pick_knots(ifelse(isnothing(xboundary), x, vcat(x, xboundary)), all_knots = all_knots, scaled = scaled, prop_nknots = prop_nknots)
     bbasis = R"fda::create.bspline.basis(breaks = $knots, norder = 4)"
     Ω = rcopy(R"fda::eval.penalty($bbasis, 2)")
     # Ω = (Ω + Ω') / 2

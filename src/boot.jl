@@ -108,11 +108,13 @@ function check_acc(; n = 100, σ = 0.1, f = exp,
                         λs = exp.(range(-10, -4, length = 100)),
                         niter = 10000,
                         η0 = 1e-4, η = 1e-3,
+                        nhidden = 1000, depth = 2,
                         seed = 1234,
                         use_torchsort = false, sort_reg_strength = 0.1,
                         gpu_id = 0,
                         patience = 100, cooldown = 100,
                         percent_warm_up = 10,
+                        prop_nknots = 1.0,
                         max_norm = 2.0, clip_ratio = 1.0, decay_step=1000, amsgrad = true, γ = 1.0,
                         fig = true, figfolder = "~"
                         )
@@ -132,27 +134,30 @@ function check_acc(; n = 100, σ = 0.1, f = exp,
             # x = rand(n) * 2 .- 1
             # y = f.(x) + randn(n) * σ        
         end
-        B, Bnew, L, J = build_model(x, true)
+        # μy = mean(y)
+        B, Bnew, L, J = build_model(x, true, prop_nknots = prop_nknots)
         res_time[i, 1] = @elapsed for (j, λ) in enumerate(λs)
             βhat0, yhat0 = mono_ss(x, y, λ)
             Yhat0[j, :] = yhat0
         end
-        res_time[i, 2] = @elapsed Ghat = py_train_G_lambda(y, B, L, K = M, nepoch = 0, η = η, 
+        res_time[i, 2] = @elapsed Ghat = py_train_G_lambda(y, #y .- μy, 
+                                                            B, L, K = M, nepoch = 0, η = η, 
                                                             figname = ifelse(fig, "$figfolder/loss-$f-$σ-$i.png", nothing), 
                                                             amsgrad = amsgrad, γ = γ, η0 = η0, 
                                                             use_torchsort = use_torchsort,
                                                             sort_reg_strength = sort_reg_strength,
                                                             gpu_id = gpu_id,
+                                                            nhidden = nhidden, depth = depth,
                                                             patience = patience, cooldown = cooldown,
                                                             percent_warm_up = percent_warm_up,
                                                             decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, warm_up = niter, λl = λs[1], λu = λs[end])
         if fig
-            fitfig = scatter(x, y, legend=:topleft, label="", title="seed = $seed")
+            fitfig = scatter(x, y, legend=:topleft, label="", title="seed = $seed, J = $J")
             idx = sortperm(x)
         end
         res_time[i, 3] = @elapsed for (j, λ) in enumerate(λs)
             λ_aug = [λ, cbrt(λ), exp(λ), sqrt(λ), log(λ), 10*λ, λ^2, λ^3]
-            yhat = B * Ghat(vcat(y, λ_aug))
+            yhat = B * Ghat(vcat(y, λ_aug)) #.+ μy
             rel_gap = Flux.Losses.mse(Yhat0[j, :], yhat) / Flux.Losses.mse(Yhat0[j, :], zeros(n))
             fit_ratio = Flux.Losses.mse(yhat, y) / Flux.Losses.mse(Yhat0[j, :], y)
             fit_ratio2 = Flux.Losses.mse(yhat, f.(x)) / Flux.Losses.mse(Yhat0[j, :], f.(x))
@@ -493,6 +498,7 @@ end
 
 function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatrix; 
                             η = 0.001, η0 = 0.0001, K = 10, nepoch = 100, σ = 1.0, 
+                            nhidden = 1000, depth = 2,
                             amsgrad = false,
                             γ = 0.9,
                             max_norm = 2.0, clip_ratio = 1.0,
@@ -510,7 +516,7 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
     # Ghat, LOSS1, LOSS2 = py"train_G"(Float32.(y), Float32.(B), eta = η, K = K, nepoch = nepoch, sigma = σ)
     # Ghat, LOSS = py"train_G"(Float32.(y), Float32.(B), Float32.(L), λ, eta = η, K = K, nepoch = nepoch, sigma = σ)
     # Ghat, LOSS 
-    py_ret = @pycall _py_boot."train_G_lambda"(Float32.(y), Float32.(B), Float32.(L), eta = η, K = K, nepoch = nepoch, sigma = σ, amsgrad = amsgrad, gamma = γ, eta0 = η0, decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, debug_with_y0 = debug_with_y0, y0 = Float32.(y0), warm_up = warm_up, N1 = N1, N2 = N2, lam_lo = λl, lam_up = λu, use_torchsort = use_torchsort,sort_reg_strength=sort_reg_strength, gpu_id = gpu_id, patience=patience, cooldown=cooldown, percent_warm_up = percent_warm_up)::Tuple{PyObject, PyArray}
+    py_ret = @pycall _py_boot."train_G_lambda"(Float32.(y), Float32.(B), Float32.(L), eta = η, K = K, nepoch = nepoch, sigma = σ, amsgrad = amsgrad, gamma = γ, eta0 = η0, decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, debug_with_y0 = debug_with_y0, y0 = Float32.(y0), warm_up = warm_up, N1 = N1, N2 = N2, lam_lo = λl, lam_up = λu, use_torchsort = use_torchsort,sort_reg_strength=sort_reg_strength, gpu_id = gpu_id, patience=patience, cooldown=cooldown, percent_warm_up = percent_warm_up, nhidden = nhidden, depth = depth)::Tuple{PyObject, PyArray}
     println(typeof(py_ret)) #Tuple{PyCall.PyObject, Matrix{Float32}} 
     # ....................... # Tuple{PyCall.PyObject, PyCall.PyArray{Float32, 2}}
     if !isnothing(figname)
