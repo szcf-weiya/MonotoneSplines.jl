@@ -137,7 +137,7 @@ function check_acc(; n = 100, σ = 0.1, f = exp,
         # μy = mean(y)
         B, Bnew, L, J = build_model(x, true, prop_nknots = prop_nknots)
         res_time[i, 1] = @elapsed for (j, λ) in enumerate(λs)
-            βhat0, yhat0 = mono_ss(x, y, λ)
+            βhat0, yhat0 = mono_ss(x, y, λ, prop_nknots = prop_nknots)
             Yhat0[j, :] = yhat0
         end
         res_time[i, 2] = @elapsed Ghat = py_train_G_lambda(y, #y .- μy, 

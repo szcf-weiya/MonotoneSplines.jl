@@ -128,8 +128,8 @@ function eval_penalty(model::Spl{T}, x::AbstractVector{T}) where T <: AbstractFl
     return rcopy(R"fda::eval.penalty($bbasis, 2)")
 end
 
-function mono_ss(x::AbstractVector, y::AbstractVector, λ = 1.0; ε = (eps())^(1/3))
-    B, Bnew, L, J = build_model(x, true)
+function mono_ss(x::AbstractVector, y::AbstractVector, λ = 1.0; ε = (eps())^(1/3), prop_nknots = 1.0)
+    B, Bnew, L, J = build_model(x, true, prop_nknots = prop_nknots)
     return mono_ss(B, y, L, J, λ; ε = ε)
 end
 
