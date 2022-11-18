@@ -16,7 +16,8 @@ cubic(x) = x^3
 logit(x) = 1/(1+exp(-x))
 
 function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200, 
-                        K = 10, nrep = 100, α = 0.05, C = 1, patience = 3, η = 0.001, method = "pytorch",
+                        K = 10, nrep = 100, α = 0.05, C = 1, η = 0.001, method = "pytorch",
+                        K0 = 10,
                         λ = 0.1, cvλ = false, λs = exp.(range(-10, -4, length = 100)),
                         amsgrad = true,
                         γ = 0.9,
@@ -26,12 +27,23 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
                         decay_step = round(Int, 1 / η),
                         warm_up = 100, N1 = 100, N2 = 100,
                         seed = 1234,
+                        prop_nknots = 1.0,
+                        nhidden = 1000, depth = 2,
+                        gpu_id = 3,
+                        model_file = nothing,
+                        patience = 100, cooldown = 100,
                         fig = true, figfolder = "~"
                         )
     timestamp = replace(strip(read(`date -Iseconds`, String)), ":" => "_")
-    res_covprob = zeros(nrep) # 
+    nλ = length(λs)
     res_time = zeros(nrep)
+    res_covprob = zeros(nrep) #
     res_err = zeros(nrep, 3)
+    if method == "lambda" || method == "lambda_from_file"
+        res_covprob = zeros(nrep, nλ)
+        res_err = zeros(nrep, nλ, 3)
+    end
+    Yhat0 = zeros(nλ, n)
     ## julia's progress bar has been overrideen by tqdm's progress bar
     for i = 1:nrep
         if nrep == 1
@@ -44,14 +56,18 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
             # x = rand(n) * 2 .- 1
             # y = f.(x) + randn(n) * σ    
         end
-        B, Bnew, L, J = build_model(x, true)
+        B, Bnew, L, J = build_model(x, true, prop_nknots = prop_nknots)
         if cvλ
             errs, _, _, _ = cv_mono_ss(x, y, λs)
             λopt = λs[argmin(errs)]
             βhat0, yhat0 = mono_ss(x, y, λopt)
             λ = λopt  / n # TODO: since LOSS + λopt Penalty, then LOSS / n + λ / n * Penalty
         else
-            βhat0, yhat0 = mono_ss(x, y, λ);
+            βhat0, yhat0 = mono_ss(x, y, λ, prop_nknots = prop_nknots);
+        end
+        for (j, λ) in enumerate(λs)
+            βhat0, yhat0 = mono_ss(x, y, λ, prop_nknots = prop_nknots)
+            Yhat0[j, :] = yhat0
         end
         # err0 = Flux.Losses.mse(yhat, y)
         σ0 = lm(x, y)
@@ -63,8 +79,22 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
             elseif method == "jl_lambda"
                 Ghat = train_G(x, y, B, L, λ, K = K, σ = σ0, nepoch = nepoch, nB = nB, η = η)
             elseif method == "lambda"
-                Ghat = py_train_G_lambda(y, B, L, K = K, nepoch = nepoch, η = η, σ = σ0, figname = ifelse(fig, "$figfolder/loss-$f-$i.png", nothing), amsgrad = amsgrad, γ = γ, η0 = η0, decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio,
-                debug_with_y0 = debug_with_y0, y0 = f.(x), warm_up = warm_up, N1 = N1, N2 = N2, λl = λs[1]/n, λu = λs[end]/n)
+                M = K
+                Ghat, LOSS = py_train_G_lambda(y,
+                                                B, L, K = M, nepoch = nepoch, η = η, 
+                                                K0 = K0,
+                                                figname = ifelse(fig, "$figfolder/loss-$f-$σ-$i.png", nothing), 
+                                                amsgrad = amsgrad, γ = γ, η0 = η0, 
+                                                use_torchsort = false,
+                                                gpu_id = gpu_id,
+                                                nhidden = nhidden, depth = depth,
+                                                model_file = "model-$f-$σ-$i-$seed-$timestamp.pt",
+                                                patience = patience, cooldown = cooldown,
+                                                decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, 
+                                                warm_up = warm_up, λl = λs[1], λu = λs[end])
+            elseif method == "lambda_from_file"
+                # gpu is much faster
+                Ghat = load_model(n, J, nhidden, model_file, gpu_id = gpu_id)
             else
                 Ghat = train_G2(x, y, B; K = K, σ = σ0, nepoch = nepoch, nB = nB, C = C, patience = patience, η = η) 
             end
@@ -80,8 +110,24 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
         # # res[i] = coverage_prob(B * CI, f.(x)) 
         # YCI = hcat([quantile(t, [α/2, 1-α/2]) for t in eachrow(Yhat)]...)'
         # res[i] = coverage_prob(YCI, f.(x)) 
-        if method == "lambda"
-            sample_G_λ(Ghat, B, x, y, f, λs/n, nB = nB, figname = ifelse(fig, "$figfolder/fit-$f-$i.png", nothing))
+        if method == "lambda" || method == "lambda_from_file"
+            fitfig = scatter(x, y, legend=:topleft, label="", title="seed = $seed, J = $J")
+            idx = sortperm(x)
+            for (j, λ) in enumerate(λs)
+                λ_aug = [λ, cbrt(λ), exp(λ), sqrt(λ), log(λ), 10*λ, λ^2, λ^3]
+                yhat = B * Ghat(vcat(y, λ_aug)) #.+ μy
+                rel_gap = Flux.Losses.mse(Yhat0[j, :], yhat) / Flux.Losses.mse(Yhat0[j, :], zeros(n))
+                fit_ratio = Flux.Losses.mse(yhat, y) / Flux.Losses.mse(Yhat0[j, :], y)
+                fit_ratio2 = Flux.Losses.mse(yhat, f.(x)) / Flux.Losses.mse(Yhat0[j, :], f.(x))
+                res_err[i, j, :] .= [rel_gap, fit_ratio, fit_ratio2]
+                if fig
+                    plot!(fitfig, x[idx], yhat[idx], label = "λ = $λ")
+                    plot!(fitfig, x[idx], Yhat0[j, idx], label = "", ls = :dash)
+                end
+            end
+            savefig(fitfig, "$figfolder/fit-$f-$σ-$i.png")
+            res_covprob[i, :] .= sample_G_λ(Ghat, B, x, y, f, λs, nB = nB)
+            # sample_G_λ(Ghat, B, x, y, f, λs/n, nB = nB, figname = ifelse(fig, "$figfolder/fit-$f-$σ-$i.png", nothing))            
         else
             res_covprob[i], yhat = sample_G(Ghat, B, x, y, f, nB = nB, figname = ifelse(fig, "$figfolder/fit-$f-$i.png", nothing))
             res_err[i, :] = [Flux.Losses.mse(yhat0, yhat),
@@ -94,12 +140,12 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
                 savefig(plot(log.(λs), log.(errs)), "$figfolder/cv-$f-$i.png")
                 run(`ssh sandbox convert $figfolder/cv-$f-$i.png $figfolder/fit-$f-$i.png $figfolder/loss-$f-$i.png +append $figfolder/$f-$i.png`)
             else
-                run(`ssh sandbox convert $figfolder/fit-$f-$i.png $figfolder/loss-$f-$i.png +append $figfolder/$f-$i.png`)
+                run(`ssh sandbox convert $figfolder/fit-$f-$σ-$i.png $figfolder/loss-$f-$σ-$i.png +append $figfolder/$f-$σ-$i.png`)
             end
         end                    
     end
     serialize("$f-n$n-σ$σ-nrep$nrep-B$nB-K$K-λ$λ-η$η-nepoch$nepoch-$timestamp.sil", [res_covprob, res_err, res_time])
-    return mean(res_covprob), mean(res_err, dims=1), mean(res_time)
+    return mean(res_covprob, dims=1)[1,:], mean(res_err, dims=1)[1,:,:], mean(res_time)
 end
 
 function check_acc(; n = 100, σ = 0.1, f = exp, 
@@ -115,6 +161,7 @@ function check_acc(; n = 100, σ = 0.1, f = exp,
                         patience = 100, cooldown = 100,
                         percent_warm_up = 10,
                         prop_nknots = 1.0,
+                        demo = false,
                         max_norm = 2.0, clip_ratio = 1.0, decay_step=1000, amsgrad = true, γ = 1.0,
                         fig = true, figfolder = "~"
                         )
@@ -123,6 +170,12 @@ function check_acc(; n = 100, σ = 0.1, f = exp,
     res_time = zeros(nrep, 3)
     res_err = zeros(nrep, nλ, 3)
     Yhat0 = zeros(nλ, n)
+    if demo & (nrep > 1)
+        @warn "demo should work with nrep = 1"
+    end
+    if demo 
+        Yhat = zeros(nλ, n)
+    end
     for i = 1:nrep
         if nrep == 1
             x = rand(MersenneTwister(seed), n) * 2 .- 1
@@ -140,7 +193,7 @@ function check_acc(; n = 100, σ = 0.1, f = exp,
             βhat0, yhat0 = mono_ss(x, y, λ, prop_nknots = prop_nknots)
             Yhat0[j, :] = yhat0
         end
-        res_time[i, 2] = @elapsed Ghat = py_train_G_lambda(y, #y .- μy, 
+        res_time[i, 2] = @elapsed Ghat, LOSS = py_train_G_lambda(y, #y .- μy, 
                                                             B, L, K = M, nepoch = 0, η = η, 
                                                             figname = ifelse(fig, "$figfolder/loss-$f-$σ-$i.png", nothing), 
                                                             amsgrad = amsgrad, γ = γ, η0 = η0, 
@@ -158,6 +211,9 @@ function check_acc(; n = 100, σ = 0.1, f = exp,
         res_time[i, 3] = @elapsed for (j, λ) in enumerate(λs)
             λ_aug = [λ, cbrt(λ), exp(λ), sqrt(λ), log(λ), 10*λ, λ^2, λ^3]
             yhat = B * Ghat(vcat(y, λ_aug)) #.+ μy
+            if demo
+                Yhat[j, :] = yhat
+            end
             rel_gap = Flux.Losses.mse(Yhat0[j, :], yhat) / Flux.Losses.mse(Yhat0[j, :], zeros(n))
             fit_ratio = Flux.Losses.mse(yhat, y) / Flux.Losses.mse(Yhat0[j, :], y)
             fit_ratio2 = Flux.Losses.mse(yhat, f.(x)) / Flux.Losses.mse(Yhat0[j, :], f.(x))
@@ -174,6 +230,9 @@ function check_acc(; n = 100, σ = 0.1, f = exp,
             else # on rocky
                 run(`convert $figfolder/fit-$σ-$f-$i.png $figfolder/loss-$σ-$f-$i.png +append $figfolder/$f-$σ-$i.png`)
             end
+        end
+        if demo
+            serialize("demo-acc-$f-n$n-σ$σ-seed$seed-M$M-η0$η0-niter$niter-prop$(prop_nknots)-$timestamp.sil", [x, y, λs, J, Yhat, Yhat0, LOSS])
         end
     end
     serialize("acc-$f-n$n-σ$σ-nrep$nrep-M$M-η0$η0-niter$niter-$timestamp.sil", [res_err, res_time])
@@ -423,30 +482,34 @@ end
 
 function sample_G_λ(G, B::AbstractMatrix{T}, x::AbstractVector{T}, y::AbstractVector{T}, f::Function, λs::AbstractVector{T}; 
                         device = cpu, nB = 100, α = 0.05, figname = "cubic.png") where T <: AbstractFloat
-    if !isnothing(figname)
-        fig = scatter(x, y, legend=:topleft, label="")
-    end
+    # if !isnothing(figname)
+    #     fig = scatter(x, y, legend=:topleft, label="")
+    # end
+    n = length(y)
+    nλ = length(λs)
+    cp = zeros(nλ)
     for (i, λ) in enumerate(λs)
-        γhat = G(vcat(y, [λ, cbrt(λ), exp(λ), sqrt(λ), log(λ), 10*λ, λ^2, λ^3])) 
+        aug_λ = [λ, cbrt(λ), exp(λ), sqrt(λ), log(λ), 10*λ, λ^2, λ^3]
+        γhat = G(vcat(y, aug_λ)) 
         yhat = B * γhat
-    #σhat = std(y - yhat)
-    #n = length(y)
-    #Γhat = hcat([G(B * γhat + device(randn(n) * σhat) ) for _ in 1:nB]...)
-    #Yhat = B * Γhat
+        σhat = std(y - yhat)
+        Γhat = hcat([G(vcat(yhat + randn(n) * σhat, aug_λ) ) for _ in 1:nB]...)
+        Yhat = B * Γhat
         idx = sortperm(x)
-    #YCI = hcat([quantile(t, [α/2, 1-α/2]) for t in eachrow(Yhat)]...)'
-    #cp = coverage_prob(YCI, f.(x))
-        if !isnothing(figname)
-        #    plot(x[idx], Yhat[idx,:], legend = false, title = "B = $nB, Cov = $cp")
-            # scatter!(x, y)
-            plot!(fig, x[idx], yhat[idx], label = "λ = $λ")
-            # plot!(x[idx], YCI[idx,:], lw = 2)
-            savefig(figname[1:end-4] * "-$i.png")
-        end
+        YCI = hcat([quantile(t, [α/2, 1-α/2]) for t in eachrow(Yhat)]...)'
+        cp[i] = coverage_prob(YCI, f.(x))
+        # if !isnothing(figname)
+        # #    plot(x[idx], Yhat[idx,:], legend = false, title = "B = $nB, Cov = $cp")
+        #     # scatter!(x, y)
+        #     plot!(fig, x[idx], yhat[idx], label = "λ = $λ")
+        #     # plot!(x[idx], YCI[idx,:], lw = 2)
+        #     savefig(figname[1:end-4] * "-$i.png")
+        # end
     end
-    if !isnothing(figname)
-        savefig(figname)
-    end
+    return cp
+    # if !isnothing(figname)
+    #     savefig(figname)
+    # end
     # return cp, yhat
 end
 
@@ -498,6 +561,7 @@ end
 
 function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatrix; 
                             η = 0.001, η0 = 0.0001, K = 10, nepoch = 100, σ = 1.0, 
+                            K0 = 10,
                             nhidden = 1000, depth = 2,
                             amsgrad = false,
                             γ = 0.9,
@@ -510,19 +574,35 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
                             λl = 1e-9, λu = 1e-4,
                             use_torchsort = false,
                             sort_reg_strength = 0.1,
+                            model_file = "model_G.pt",
                             gpu_id = 0,
                             figname = "pyloss.png" # not plot if nothing
                             )
     # Ghat, LOSS1, LOSS2 = py"train_G"(Float32.(y), Float32.(B), eta = η, K = K, nepoch = nepoch, sigma = σ)
     # Ghat, LOSS = py"train_G"(Float32.(y), Float32.(B), Float32.(L), λ, eta = η, K = K, nepoch = nepoch, sigma = σ)
-    # Ghat, LOSS 
-    py_ret = @pycall _py_boot."train_G_lambda"(Float32.(y), Float32.(B), Float32.(L), eta = η, K = K, nepoch = nepoch, sigma = σ, amsgrad = amsgrad, gamma = γ, eta0 = η0, decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, debug_with_y0 = debug_with_y0, y0 = Float32.(y0), warm_up = warm_up, N1 = N1, N2 = N2, lam_lo = λl, lam_up = λu, use_torchsort = use_torchsort,sort_reg_strength=sort_reg_strength, gpu_id = gpu_id, patience=patience, cooldown=cooldown, percent_warm_up = percent_warm_up, nhidden = nhidden, depth = depth)::Tuple{PyObject, PyArray}
-    println(typeof(py_ret)) #Tuple{PyCall.PyObject, Matrix{Float32}} 
+    Ghat, LOSS = _py_boot."train_G_lambda"(Float32.(y), Float32.(B), Float32.(L), eta = η, K = K, 
+                                            K0 = K0,
+                                            nepoch = nepoch, sigma = σ, amsgrad = amsgrad, 
+                                            gamma = γ, eta0 = η0, 
+                                            decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, debug_with_y0 = debug_with_y0, y0 = Float32.(y0), 
+                                            warm_up = warm_up, N1 = N1, N2 = N2, 
+                                            lam_lo = λl, lam_up = λu, 
+                                            model_file = model_file,
+                                            use_torchsort = use_torchsort, sort_reg_strength=sort_reg_strength, 
+                                            gpu_id = gpu_id, patience=patience, cooldown=cooldown, 
+                                            percent_warm_up = percent_warm_up, nhidden = nhidden, depth = depth)#::Tuple{PyObject, PyArray}
+    #println(typeof(py_ret)) #Tuple{PyCall.PyObject, Matrix{Float32}} 
     # ....................... # Tuple{PyCall.PyObject, PyCall.PyArray{Float32, 2}}
+    #LOSS = Matrix(py_ret[2]) # NB: not necessarily a matrix, but possibly a matrix
     if !isnothing(figname)
-        LOSS = py_ret[2]
         savefig(plot(log.(LOSS)), figname)
     end
-    # return y -> py"$Ghat"(Float32.(y))
-    return y -> py"$(py_ret[1])"(Float32.(y))
+    return y -> py"$Ghat"(Float32.(y)), LOSS
+    #return y -> py"$(py_ret[1])"(Float32.(y)), LOSS
+end
+
+
+function load_model(n::Int, J::Int, nhidden::Int, model_file::String; dim_lam = 8, gpu_id = 3)
+    Ghat = _py_boot."load_model"(n, dim_lam, J, nhidden, model_file, gpu_id)
+    return y -> py"$Ghat"(Float32.(y))
 end
