@@ -22,6 +22,7 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
                         amsgrad = true,
                         γ = 0.9,
                         η0 = 0.0001,
+                        demo = false,
                         max_norm = 2.0, clip_ratio = 1.0,
                         debug_with_y0 = false,
                         decay_step = round(Int, 1 / η),
@@ -30,6 +31,8 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
                         prop_nknots = 1.0,
                         nhidden = 1000, depth = 2,
                         gpu_id = 3,
+                        single_lambda_step2 = false,
+                        lambda_step2 = 0.0,
                         model_file = nothing,
                         patience = 100, cooldown = 100,
                         fig = true, figfolder = "~"
@@ -39,11 +42,13 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
     res_time = zeros(nrep)
     res_covprob = zeros(nrep) #
     res_err = zeros(nrep, 3)
+    Err_boot = zeros(nrep, nλ, 3)
     if method == "lambda" || method == "lambda_from_file"
         res_covprob = zeros(nrep, nλ)
         res_err = zeros(nrep, nλ, 3)
     end
     Yhat0 = zeros(nλ, n)
+    Yhat = zeros(nλ, n)
     ## julia's progress bar has been overrideen by tqdm's progress bar
     for i = 1:nrep
         if nrep == 1
@@ -88,6 +93,8 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
                                                 use_torchsort = false,
                                                 gpu_id = gpu_id,
                                                 nhidden = nhidden, depth = depth,
+                                                single_lambda_step2 = single_lambda_step2,
+                                                lambda_step2 = lambda_step2,                    
                                                 model_file = "model-$f-$σ-$i-$seed-$timestamp.pt",
                                                 patience = patience, cooldown = cooldown,
                                                 decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, 
@@ -113,20 +120,38 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
         if method == "lambda" || method == "lambda_from_file"
             fitfig = scatter(x, y, legend=:topleft, label="", title="seed = $seed, J = $J")
             idx = sortperm(x)
+            fit_err = zeros(nλ, n)
             for (j, λ) in enumerate(λs)
                 λ_aug = [λ, cbrt(λ), exp(λ), sqrt(λ), log(λ), 10*λ, λ^2, λ^3]
-                yhat = B * Ghat(vcat(y, λ_aug)) #.+ μy
+                yhat = B * Ghat(vcat(y, λ_aug))
+                Yhat[j, :] .= yhat
                 rel_gap = Flux.Losses.mse(Yhat0[j, :], yhat) / Flux.Losses.mse(Yhat0[j, :], zeros(n))
                 fit_ratio = Flux.Losses.mse(yhat, y) / Flux.Losses.mse(Yhat0[j, :], y)
                 fit_ratio2 = Flux.Losses.mse(yhat, f.(x)) / Flux.Losses.mse(Yhat0[j, :], f.(x))
                 res_err[i, j, :] .= [rel_gap, fit_ratio, fit_ratio2]
+                fit_err[j, :] .= (yhat - y).^2
                 if fig
                     plot!(fitfig, x[idx], yhat[idx], label = "λ = $λ")
                     plot!(fitfig, x[idx], Yhat0[j, idx], label = "", ls = :dash)
                 end
             end
             savefig(fitfig, "$figfolder/fit-$f-$σ-$i.png")
-            res_covprob[i, :] .= sample_G_λ(Ghat, B, x, y, f, λs, nB = nB)
+            cp, cov_hat, RES_YCI, RES_Yhat = sample_G_λ(Ghat, B, x, y, f, λs, nB = nB)
+            if demo
+                serialize("demo-CI-$f-n$n-σ$σ-seed$seed-B$nB-K0$K0-K$K-nepoch$nepoch-prop$(prop_nknots)-$timestamp.sil", [x, y, λs, J, Yhat, Yhat0, RES_YCI, cp]) # loss not exist when from file
+            end
+            res_covprob[i, :] .= cp
+            Err_boot[i, :, 1] .= mean(fit_err, dims=2)[:]
+            Err_boot[i, :, 2] .= mean(cov_hat, dims=2)[:]
+            Err_boot[i, :, 3] .= Err_boot[i, :, 1] + 2 * Err_boot[i, :, 2]
+            errfig = plot(log.(λs), Err_boot[i, :, 3], label = "err + 2cov")
+            plot!(log.(λs), Err_boot[i, :, 1], label = "err")
+            errs, _, _, _ = cv_mono_ss(x, y, λs, nfold = 10)
+            plot!(errfig, log.(λs), errs, label = "10 fold CV")
+            errs2, _, _, _ = cv_mono_ss(x, y, λs, nfold = n)
+            plot!(errfig, log.(λs), errs2, label = "LOOCV")
+            savefig(errfig, "$figfolder/err-$f-$σ-$i.png")
+            savefig(plot(log.(λs), cp), "$figfolder/cp-$f-$σ-$i.png")
             # sample_G_λ(Ghat, B, x, y, f, λs/n, nB = nB, figname = ifelse(fig, "$figfolder/fit-$f-$σ-$i.png", nothing))            
         else
             res_covprob[i], yhat = sample_G(Ghat, B, x, y, f, nB = nB, figname = ifelse(fig, "$figfolder/fit-$f-$i.png", nothing))
@@ -140,11 +165,12 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
                 savefig(plot(log.(λs), log.(errs)), "$figfolder/cv-$f-$i.png")
                 run(`ssh sandbox convert $figfolder/cv-$f-$i.png $figfolder/fit-$f-$i.png $figfolder/loss-$f-$i.png +append $figfolder/$f-$i.png`)
             else
-                run(`ssh sandbox convert $figfolder/fit-$f-$σ-$i.png $figfolder/loss-$f-$σ-$i.png +append $figfolder/$f-$σ-$i.png`)
+                # run(`ssh sandbox convert $figfolder/fit-$f-$σ-$i.png $figfolder/loss-$f-$σ-$i.png +append $figfolder/$f-$σ-$i.png`)
+                run(`ssh sandbox convert $figfolder/cp-$f-$σ-$i.png $figfolder/err-$f-$σ-$i.png $figfolder/fit-$f-$σ-$i.png $figfolder/loss-$f-$σ-$i.png +append $figfolder/$f-$σ-$i.png`)
             end
         end                    
     end
-    serialize("$f-n$n-σ$σ-nrep$nrep-B$nB-K$K-λ$λ-η$η-nepoch$nepoch-$timestamp.sil", [res_covprob, res_err, res_time])
+    serialize("$f-n$n-σ$σ-nrep$nrep-B$nB-K$K-λ$λ-η$η-nepoch$nepoch-$timestamp.sil", [res_covprob, res_err, res_time, Err_boot])
     return mean(res_covprob, dims=1)[1,:], mean(res_err, dims=1)[1,:,:], mean(res_time)
 end
 
@@ -488,16 +514,25 @@ function sample_G_λ(G, B::AbstractMatrix{T}, x::AbstractVector{T}, y::AbstractV
     n = length(y)
     nλ = length(λs)
     cp = zeros(nλ)
+    cov_hat = zeros(nλ, n)
+    RES_YCI = Array{Any, 1}(undef, nλ)
+    RES_Yhat = Array{Any, 1}(undef, nλ)
     for (i, λ) in enumerate(λs)
         aug_λ = [λ, cbrt(λ), exp(λ), sqrt(λ), log(λ), 10*λ, λ^2, λ^3]
         γhat = G(vcat(y, aug_λ)) 
         yhat = B * γhat
         σhat = std(y - yhat)
-        Γhat = hcat([G(vcat(yhat + randn(n) * σhat, aug_λ) ) for _ in 1:nB]...)
+        Ystar = hcat([yhat + randn(n) * σhat for _ in 1:nB]...)
+        Γhat = hcat([G(vcat(Ystar[:, j], aug_λ) ) for j in 1:nB]...)
         Yhat = B * Γhat
-        idx = sortperm(x)
+        # idx = sortperm(x)
         YCI = hcat([quantile(t, [α/2, 1-α/2]) for t in eachrow(Yhat)]...)'
+        RES_YCI[i] = YCI
+        RES_Yhat[i] = Yhat
         cp[i] = coverage_prob(YCI, f.(x))
+        for j = 1:n
+            cov_hat[i, j] = mean((Yhat[j, :] .- mean(Yhat[j, :])) .* (Ystar[j, :] .- mean(Ystar[j, :])) )
+        end
         # if !isnothing(figname)
         # #    plot(x[idx], Yhat[idx,:], legend = false, title = "B = $nB, Cov = $cp")
         #     # scatter!(x, y)
@@ -506,7 +541,7 @@ function sample_G_λ(G, B::AbstractMatrix{T}, x::AbstractVector{T}, y::AbstractV
         #     savefig(figname[1:end-4] * "-$i.png")
         # end
     end
-    return cp
+    return cp, cov_hat, RES_YCI, RES_Yhat
     # if !isnothing(figname)
     #     savefig(figname)
     # end
@@ -575,6 +610,8 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
                             use_torchsort = false,
                             sort_reg_strength = 0.1,
                             model_file = "model_G.pt",
+                            single_lambda_step2 = false,
+                            lambda_step2 = 0.0,
                             gpu_id = 0,
                             figname = "pyloss.png" # not plot if nothing
                             )
@@ -588,6 +625,7 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
                                             warm_up = warm_up, N1 = N1, N2 = N2, 
                                             lam_lo = λl, lam_up = λu, 
                                             model_file = model_file,
+                                            single_lambda_step2 = single_lambda_step2, lambda_step2 = lambda_step2,
                                             use_torchsort = use_torchsort, sort_reg_strength=sort_reg_strength, 
                                             gpu_id = gpu_id, patience=patience, cooldown=cooldown, 
                                             percent_warm_up = percent_warm_up, nhidden = nhidden, depth = depth)#::Tuple{PyObject, PyArray}

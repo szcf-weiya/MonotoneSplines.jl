@@ -155,7 +155,7 @@ def train_G(y, B, L, lam, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta
     loss_boot = LOSS.cpu().detach().numpy()
     return G, np.r_[np.c_[loss_warmup, loss_warmup], loss_boot]
 
-def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta0 = 0.0001, gamma = 0.9, sigma = 1, amsgrad = False, decay_step = 1000, max_norm = 2.0, clip_ratio = 1.0, debug_with_y0 = False, y0 = 0, warm_up = 100, subsequent_steps = True, N1 = 100, N2 = 100, lam_lo = 1e-9, lam_up = 1e-4, use_torchsort = False, sort_reg_strength = 0.1, gpu_id = 0, patience = 100, cooldown=100, percent_warm_up = 10, depth = 2, model_file = "model_G.pt"):
+def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta0 = 0.0001, gamma = 0.9, sigma = 1, amsgrad = False, decay_step = 1000, max_norm = 2.0, clip_ratio = 1.0, debug_with_y0 = False, y0 = 0, warm_up = 100, subsequent_steps = True, N1 = 100, N2 = 100, lam_lo = 1e-9, lam_up = 1e-4, use_torchsort = False, sort_reg_strength = 0.1, gpu_id = 0, patience = 100, cooldown=100, percent_warm_up = 10, depth = 2, model_file = "model_G.pt", single_lambda_step2 = False, lambda_step2 = 0):
     #
     device = f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu"
     y = torch.from_numpy(y[None, :]).to(device)
@@ -213,10 +213,15 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100, nhidden = 1000, eta =
     # return G, LOSS0.cpu().detach().numpy()
     pbar = tqdm.trange(nepoch, desc="Training G")
     # for epoch in range(nepoch):
+    if single_lambda_step2:
+        K0 = 1
     for epoch in pbar:
         loss2 = 0
         for i in range(K0): # for each lam
-            lam = np.random.rand() * (lam_up - lam_lo) + lam_lo
+            if single_lambda_step2:
+                lam = lambda_step2
+            else:
+                lam = np.random.rand() * (lam_up - lam_lo) + lam_lo
             aug_lam = torch.tensor([lam, lam**(1/3), np.exp(lam), np.sqrt(lam), np.log(lam), 10*lam, lam**2, lam**3], dtype=torch.float32).to(device)
             ylam = torch.cat((y, aug_lam.repeat((1, 1))), dim=1)
             beta = model(ylam)
@@ -241,6 +246,8 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100, nhidden = 1000, eta =
         opt2.step()
         sch2.step()
         LOSS[epoch, 0] = loss2.item() / K0
+        if single_lambda_step2:
+            query_lams[-1] = lambda_step2
         for i in range(3):
             lam = query_lams[i]
             aug_lam = torch.tensor([lam, lam**(1/3), np.exp(lam), np.sqrt(lam), np.log(lam), 10*lam, lam**2, lam**3], dtype=torch.float32).to(device)

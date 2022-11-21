@@ -173,10 +173,8 @@ end
 
 Cross-validation for monotone fitting with smoothing spline on `y ~ x` among parameters `λs`.
 """
-function cv_mono_ss(x::AbstractVector{T}, y::AbstractVector{T}, λs = exp.(-6:0.5:1); ε = (eps())^(1/3)) where T <: AbstractFloat
+function cv_mono_ss(x::AbstractVector{T}, y::AbstractVector{T}, λs = exp.(-6:0.5:1); ε = (eps())^(1/3), nfold = 10) where T <: AbstractFloat
     B, Bnew, L, J = build_model(x, true)
-
-    nfold = 10
     n = length(y)
     folds = div_into_folds(n, K = nfold, seed = -1)
     nλ = length(λs)
