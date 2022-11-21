@@ -128,6 +128,22 @@ function eval_penalty(model::Spl{T}, x::AbstractVector{T}) where T <: AbstractFl
     return rcopy(R"fda::eval.penalty($bbasis, 2)")
 end
 
+function ci_mono_ss(x::AbstractVector, y::AbstractVector, λ = 1.0; ε = (eps())^(1/3), 
+                                                                   prop_nknots = 1.0, B = 1000,
+                                                                   α = 0.05)
+    βhat, yhat = mono_ss(x, y, λ; ε = ε, prop_nknots = prop_nknots)
+    σhat = std(y - yhat)
+    n = length(y)
+    Yhat = zeros(n, B)
+    for b = 1:B
+        ystar = yhat + randn(n) * σhat
+        βstar_hat, ystar_hat = mono_ss(x, ystar, λ; ε = ε, prop_nknots = prop_nknots)
+        Yhat[:, b] = ystar_hat
+    end
+    YCI = hcat([quantile(t, [α/2, 1-α/2]) for t in eachrow(Yhat)]...)'
+    return yhat, YCI
+end
+
 function mono_ss(x::AbstractVector, y::AbstractVector, λ = 1.0; ε = (eps())^(1/3), prop_nknots = 1.0)
     B, Bnew, L, J = build_model(x, true, prop_nknots = prop_nknots)
     return mono_ss(B, y, L, J, λ; ε = ε)

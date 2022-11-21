@@ -183,3 +183,34 @@ function build_model(x::AbstractVector{T}; J = 10, xboundary = nothing, t = noth
         return build_model(x, !isnothing(λ),xboundary = xboundary, all_knots = all_knots, xnew = xnew, ε = ε)
     end
 end
+
+"""
+    jaccard_index(a::AbstractVector, b::AbstractVector)
+
+Calculate Jaccard Index for two confidence intervals `a` and `b`
+
+    jaccard_index(a::AbstractMatrix, b::AbstractMatrix)
+
+Calculate Jaccard Index for two confidence intervals `a[i, :]` and `b[i, :]`
+"""
+function jaccard_index(a::AbstractVector, b::AbstractVector)
+    # suppose both a and b are CI
+    if a[1] < b[1]
+        if a[2] < b[1]
+            return 0
+        end
+        if a[2] < b[2]
+            return (a[2] - b[1]) / (b[2] - a[1])
+        else
+            return (b[2] - b[1]) / (a[2] - a[1])
+        end
+    else
+        return jaccard_index(b, a)
+    end
+end
+
+function jaccard_index(a::AbstractMatrix, b::AbstractMatrix)
+    # both a and b are nx2 
+    res = [jaccard_index(a[i, :], b[i, :]) for i in eachindex(a[:,1])]
+    return mean(res)#, median(res)
+end
