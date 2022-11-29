@@ -31,9 +31,8 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
                         prop_nknots = 1.0,
                         nhidden = 1000, depth = 2,
                         gpu_id = 3,
-                        single_lambda_step2 = false,
-                        lambda_step2 = 0.0,
                         model_file = nothing,
+                        niter_per_epoch = 100, cooldown2 = 10,
                         patience = 100, cooldown = 100,
                         fig = true, figfolder = "~"
                         )
@@ -41,6 +40,7 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
     nλ = length(λs)
     res_time = zeros(nrep)
     res_covprob = zeros(nrep) #
+    res_overlap = zeros(nrep, nλ)
     res_err = zeros(nrep, 3)
     Err_boot = zeros(nrep, nλ, 3)
     if method == "lambda" || method == "lambda_from_file"
@@ -93,8 +93,7 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
                                                 use_torchsort = false,
                                                 gpu_id = gpu_id,
                                                 nhidden = nhidden, depth = depth,
-                                                single_lambda_step2 = single_lambda_step2,
-                                                lambda_step2 = lambda_step2,                    
+                                                niter_per_epoch = niter_per_epoch, cooldown2 = cooldown2,
                                                 model_file = "model-$f-$σ-$i-$seed-$timestamp.pt",
                                                 patience = patience, cooldown = cooldown,
                                                 decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, 
@@ -121,7 +120,10 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
             fitfig = scatter(x, y, legend=:topleft, label="", title="seed = $seed, J = $J")
             idx = sortperm(x)
             fit_err = zeros(nλ, n)
+            RES_YCI0 = Array{Any, 1}(undef, nλ)
             for (j, λ) in enumerate(λs)
+                _, YCI = MonotoneSplines.ci_mono_ss(x, y, λ, prop_nknots=prop_nknots)
+                RES_YCI0[j] = YCI
                 λ_aug = [λ, cbrt(λ), exp(λ), sqrt(λ), log(λ), 10*λ, λ^2, λ^3]
                 yhat = B * Ghat(vcat(y, λ_aug))
                 Yhat[j, :] .= yhat
@@ -138,7 +140,10 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
             savefig(fitfig, "$figfolder/fit-$f-$σ-$i.png")
             cp, cov_hat, RES_YCI, RES_Yhat = sample_G_λ(Ghat, B, x, y, f, λs, nB = nB)
             if demo
-                serialize("demo-CI-$f-n$n-σ$σ-seed$seed-B$nB-K0$K0-K$K-nepoch$nepoch-prop$(prop_nknots)-$timestamp.sil", [x, y, λs, J, Yhat, Yhat0, RES_YCI, cp]) # loss not exist when from file
+                serialize("demo-CI-$f-n$n-σ$σ-seed$seed-B$nB-K0$K0-K$K-nepoch$nepoch-prop$(prop_nknots)-$timestamp.sil", [x, y, λs, J, Yhat, Yhat0, RES_YCI, RES_YCI0, cp]) # loss not exist when from file
+            end
+            for j = 1:nλ
+                res_overlap[i, j] = jaccard_index(RES_YCI[j], RES_YCI0[j])
             end
             res_covprob[i, :] .= cp
             Err_boot[i, :, 1] .= mean(fit_err, dims=2)[:]
@@ -170,8 +175,8 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
             end
         end                    
     end
-    serialize("$f-n$n-σ$σ-nrep$nrep-B$nB-K$K-λ$λ-η$η-nepoch$nepoch-$timestamp.sil", [res_covprob, res_err, res_time, Err_boot])
-    return mean(res_covprob, dims=1)[1,:], mean(res_err, dims=1)[1,:,:], mean(res_time)
+    serialize("$f-n$n-σ$σ-nrep$nrep-B$nB-K$K-λ$λ-η$η-nepoch$nepoch-$timestamp.sil", [res_covprob, res_overlap, res_err, res_time, Err_boot])
+    return mean(res_overlap, dims=1)[1,:], mean(res_covprob, dims=1)[1,:], mean(res_err, dims=1)[1,:,:], mean(res_time)
 end
 
 function check_acc(; n = 100, σ = 0.1, f = exp, 
@@ -610,9 +615,8 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
                             use_torchsort = false,
                             sort_reg_strength = 0.1,
                             model_file = "model_G.pt",
-                            single_lambda_step2 = false,
-                            lambda_step2 = 0.0,
                             gpu_id = 0,
+                            niter_per_epoch = 100, cooldown2 = 10,
                             figname = "pyloss.png" # not plot if nothing
                             )
     # Ghat, LOSS1, LOSS2 = py"train_G"(Float32.(y), Float32.(B), eta = η, K = K, nepoch = nepoch, sigma = σ)
@@ -625,9 +629,9 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
                                             warm_up = warm_up, N1 = N1, N2 = N2, 
                                             lam_lo = λl, lam_up = λu, 
                                             model_file = model_file,
-                                            single_lambda_step2 = single_lambda_step2, lambda_step2 = lambda_step2,
                                             use_torchsort = use_torchsort, sort_reg_strength=sort_reg_strength, 
                                             gpu_id = gpu_id, patience=patience, cooldown=cooldown, 
+                                            niter_per_epoch = niter_per_epoch, cooldown2 = cooldown2,
                                             percent_warm_up = percent_warm_up, nhidden = nhidden, depth = depth)#::Tuple{PyObject, PyArray}
     #println(typeof(py_ret)) #Tuple{PyCall.PyObject, Matrix{Float32}} 
     # ....................... # Tuple{PyCall.PyObject, PyCall.PyArray{Float32, 2}}

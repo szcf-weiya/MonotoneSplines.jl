@@ -4,6 +4,7 @@ import numpy as np
 import tqdm as tqdm
 import pickle
 import torchsort
+from pytorchtools import EarlyStopping
 # https://github.com/pytorch/pytorch/issues/45038#issuecomment-695793213
 # too slow
 # import os
@@ -155,7 +156,19 @@ def train_G(y, B, L, lam, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta
     loss_boot = LOSS.cpu().detach().numpy()
     return G, np.r_[np.c_[loss_warmup, loss_warmup], loss_boot]
 
-def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta0 = 0.0001, gamma = 0.9, sigma = 1, amsgrad = False, decay_step = 1000, max_norm = 2.0, clip_ratio = 1.0, debug_with_y0 = False, y0 = 0, warm_up = 100, subsequent_steps = True, N1 = 100, N2 = 100, lam_lo = 1e-9, lam_up = 1e-4, use_torchsort = False, sort_reg_strength = 0.1, gpu_id = 0, patience = 100, cooldown=100, percent_warm_up = 10, depth = 2, model_file = "model_G.pt", single_lambda_step2 = False, lambda_step2 = 0):
+def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100, 
+                    nhidden = 1000, eta = 0.001, eta0 = 0.0001, 
+                    gamma = 0.9, sigma = 1, amsgrad = False, 
+                    decay_step = 1000, max_norm = 2.0, clip_ratio = 1.0, 
+                    debug_with_y0 = False, y0 = 0, warm_up = 100, 
+                    subsequent_steps = True, N1 = 100, N2 = 100, 
+                    lam_lo = 1e-9, lam_up = 1e-4, use_torchsort = False, 
+                    sort_reg_strength = 0.1, gpu_id = 0, 
+                    patience = 100, cooldown=100, 
+                    percent_warm_up = 10, depth = 2, 
+                    model_file = "model_G.pt", 
+                    niter_per_epoch = 100, cooldown2 = 10,
+                    patience2 = 100):
     #
     device = f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu"
     y = torch.from_numpy(y[None, :]).to(device)
@@ -178,25 +191,32 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100, nhidden = 1000, eta =
     LOSS0 = torch.zeros(warm_up, 4).to(device)
     query_lams = [lam_lo, lam_up, (lam_lo + lam_up) / 2]
     pbar0 = tqdm.trange(warm_up, desc="Training G (warm up)")
+    train_losses = []
+    early_stopping1 = EarlyStopping(patience = patience, verbose = False, path = model_file)
     for epoch in pbar0:
         # if epoch < stage_warm_up:
         #     lams = torch.ones((K, 1)).to(device) * lam_lo #* (lam_up + lam_lo) / 2
         # else:
         #     lams = torch.rand((K, 1)).to(device) * (lam_up - lam_lo) + lam_lo
-        lams = torch.rand((K, 1)).to(device) * (lam_up - lam_lo) + lam_lo
-        ys = torch.cat((y.repeat( (K, 1) ), lams, torch.pow(lams, 1/3), torch.exp(lams), torch.sqrt(lams), 
-                                             torch.log(lams), 10*lams, torch.square(lams), torch.pow(lams, 3)), dim = 1) # repeat works regardless of y has been augmented via `y[None, :]`
-        betas = model(ys)
-        ypred = torch.matmul(betas, B.t())
-        loss1_fit = loss_fn(ypred, y.repeat((K, 1)))
-        # loss1_fit = loss_fn(ypred, y) # throw a warning without repeat, but it should be fine
-        #                               Kx1               K x J
-        loss1 = loss1_fit + torch.mean(lams * torch.square(torch.matmul(betas, L))) * J / n
-        opt1.zero_grad()
-        loss1.backward()
-        nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_norm)
-        opt1.step()
-        LOSS0[epoch, 0] = loss1.item()
+        for ii in range(niter_per_epoch):
+            lams = torch.rand((K, 1)).to(device) * (lam_up - lam_lo) + lam_lo
+            ys = torch.cat((y.repeat( (K, 1) ), lams, torch.pow(lams, 1/3), torch.exp(lams), torch.sqrt(lams), 
+                                                torch.log(lams), 10*lams, torch.square(lams), torch.pow(lams, 3)), dim = 1) # repeat works regardless of y has been augmented via `y[None, :]`
+            betas = model(ys)
+            ypred = torch.matmul(betas, B.t())
+            loss1_fit = loss_fn(ypred, y.repeat((K, 1)))
+            # loss1_fit = loss_fn(ypred, y) # throw a warning without repeat, but it should be fine
+            #                               Kx1               K x J
+            loss1 = loss1_fit + torch.mean(lams * torch.square(torch.matmul(betas, L))) * J / n
+            opt1.zero_grad()
+            loss1.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_norm)
+            opt1.step()
+            train_losses.append(loss1.item())
+            if ii == niter_per_epoch - 1:
+                LOSS0[epoch, 0] = loss1.item()
+        
+        # LOSS0[epoch, 0] = np.average(train_losses) # train loss per epoch
         for i in range(3):
             lam = query_lams[i]
             aug_lam = torch.tensor([lam, lam**(1/3), np.exp(lam), np.sqrt(lam), np.log(lam), 10*lam, lam**2, lam**3], dtype=torch.float32).to(device)
@@ -207,47 +227,50 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100, nhidden = 1000, eta =
         if epoch > cooldown:
             sch1.step(LOSS0[epoch, 1:].mean())
         # sch1.step()
+        early_stopping1(LOSS0[epoch, 1:].mean(), model)
         pbar0.set_postfix(epoch = epoch, loss = loss1.item(), lr = opt1.param_groups[0]['lr'])
-    # G = lambda y: model(torch.from_numpy(y).to(device)).cpu().detach().numpy() # support y is Float32
-
-    # return G, LOSS0.cpu().detach().numpy()
+        if early_stopping1.early_stop:
+            print("Early stopping!")
+            LOSS0 = LOSS0[:epoch,:]
+            break
+    # ##########
+    # step 2 
+    # ##########
+    model.load_state_dict(torch.load(model_file))
     pbar = tqdm.trange(nepoch, desc="Training G")
+    early_stopping2 = EarlyStopping(patience = patience, verbose = False, path = model_file)
+    train_losses = []
     # for epoch in range(nepoch):
-    if single_lambda_step2:
-        K0 = 1
     for epoch in pbar:
-        loss2 = 0
-        for i in range(K0): # for each lam
-            if single_lambda_step2:
-                lam = lambda_step2
-            else:
+        for ii in range(niter_per_epoch):
+            loss2 = 0
+            for i in range(K0): # for each lam
                 lam = np.random.rand() * (lam_up - lam_lo) + lam_lo
-            aug_lam = torch.tensor([lam, lam**(1/3), np.exp(lam), np.sqrt(lam), np.log(lam), 10*lam, lam**2, lam**3], dtype=torch.float32).to(device)
-            ylam = torch.cat((y, aug_lam.repeat((1, 1))), dim=1)
-            beta = model(ylam)
-            ypred = torch.matmul(beta, B.t())
-            sigma = torch.std(ypred.detach() - y, unbiased = True)
-            epsilons = torch.randn((K, n)).to(device) * sigma
+                aug_lam = torch.tensor([lam, lam**(1/3), np.exp(lam), np.sqrt(lam), np.log(lam), 10*lam, lam**2, lam**3], dtype=torch.float32).to(device)
+                ylam = torch.cat((y, aug_lam.repeat((1, 1))), dim=1)
+                beta = model(ylam)
+                ypred = torch.matmul(beta, B.t())
+                sigma = torch.std(ypred.detach() - y, unbiased = True)
+                epsilons = torch.randn((K, n)).to(device) * sigma
 
-            #        1xn      +      Kxn
-            # https://pytorch.org/docs/master/notes/broadcasting.html#broadcasting-semantics
-            ytrain = ypred.detach() + epsilons  ## TODO: did ypred would be updated even if it put outside?
-            # ytrain = ypred + epsilons
-            yslam = torch.cat((ytrain, aug_lam.repeat((K, 1)) ), dim=1)
-            betas = model(yslam) # K x J
-            yspred = torch.matmul(betas, B.t()) # KxJ x Jxn
-            # ...............................................................KxJ x JxJ
-            loss2 = loss2 + loss_fn(yspred, ytrain) + lam * torch.square(torch.matmul(betas, L)).mean() * J / n
-        #
-        opt2.zero_grad()
-        loss2.backward()
-        nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_norm * clip_ratio)
-        # nn.utils.clip_grad_value_(model.parameters(), max_norm)
-        opt2.step()
-        sch2.step()
-        LOSS[epoch, 0] = loss2.item() / K0
-        if single_lambda_step2:
-            query_lams[-1] = lambda_step2
+                #        1xn      +      Kxn
+                ytrain = ypred.detach() + epsilons 
+                yslam = torch.cat((ytrain, aug_lam.repeat((K, 1)) ), dim=1)
+                betas = model(yslam) # K x J
+                yspred = torch.matmul(betas, B.t()) # KxJ x Jxn
+                # ...............................................................KxJ x JxJ
+                loss2 = loss2 + loss_fn(yspred, ytrain) + lam * torch.square(torch.matmul(betas, L)).mean() * J / n
+            #
+            opt2.zero_grad()
+            loss2.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_norm * clip_ratio)
+            # nn.utils.clip_grad_value_(model.parameters(), max_norm)
+            opt2.step()
+            sch2.step()
+            train_losses.append(loss2.item() / K0)
+            if ii == niter_per_epoch - 1:
+                LOSS[epoch, 0] = loss2.item() / K0
+        # LOSS[epoch, 0] = np.average(train_losses)
         for i in range(3):
             lam = query_lams[i]
             aug_lam = torch.tensor([lam, lam**(1/3), np.exp(lam), np.sqrt(lam), np.log(lam), 10*lam, lam**2, lam**3], dtype=torch.float32).to(device)
@@ -255,21 +278,22 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100, nhidden = 1000, eta =
             beta = model(ylam).detach()
             ypred = torch.matmul(beta, B.t())
             LOSS[epoch, i+1] = loss_fn(ypred, y) + lam * torch.square(torch.matmul(beta, L)).mean() * J / n
-        
+
+        if epoch > cooldown2:
+            early_stopping2(LOSS[epoch, 1:].mean(), model)
         pbar.set_postfix(epoch = epoch, loss = LOSS[epoch, 0].item())
+        if early_stopping2.early_stop:
+            print("Early stopping!")
+            LOSS = LOSS[:epoch,:]
+            break
     #
     # pickle.dump([beta.cpu().detach().numpy(), ypred.cpu().detach().numpy()], open("debug-boot-step2.pl", "wb"))
-    # https://stackoverflow.com/a/43819235/
-    # https://github.com/pytorch/pytorch/blob/761d6799beb3afa03657a71776412a2171ee7533/docs/source/notes/serialization.rst
-    torch.save(model.state_dict(), model_file) 
-    # model2 = Model(n+dim_lam, J, nhidden, use_torchsort, sort_reg_strength)
-    # model2.load_state_dict(torch.load("model_G.pt"))
-    G = lambda y: model(torch.from_numpy(y[None,:]).to(device)).cpu().detach().numpy().squeeze() # support y is Float32
-    # G = lambda y: model2(torch.from_numpy(y[None,:])).cpu().detach().numpy().squeeze() # support y is Float32
+    #torch.save(model.state_dict(), model_file) # already saved as checkpoints in EarlyStopping
+    model.load_state_dict(torch.load(model_file))
+    G = lambda y: model(torch.from_numpy(y[None,:]).to(device)).cpu().detach().numpy().squeeze() # y should be Float32
     loss_warmup = LOSS0.cpu().detach().numpy()
     loss_boot = LOSS.cpu().detach().numpy()
     if nepoch == 0:
-        #ret_loss = loss_warmup[::10,:] # attempts to avoid StackOverflowError #120
         ret_loss = loss_warmup
     else:
         ret_loss = np.r_[loss_warmup, loss_boot]
