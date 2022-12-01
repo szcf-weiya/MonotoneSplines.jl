@@ -194,7 +194,8 @@ function check_acc(; n = 100, σ = 0.1, f = exp,
                         prop_nknots = 1.0,
                         demo = false,
                         max_norm = 2.0, clip_ratio = 1.0, decay_step=1000, amsgrad = true, γ = 1.0,
-                        fig = true, figfolder = "~"
+                        fig = true, figfolder = "~",
+                        backend = "pytorch"
                         )
     timestamp = replace(strip(read(`date -Iseconds`, String)), ":" => "_")
     nλ = length(λs)
@@ -224,17 +225,23 @@ function check_acc(; n = 100, σ = 0.1, f = exp,
             βhat0, yhat0 = mono_ss(x, y, λ, prop_nknots = prop_nknots)
             Yhat0[j, :] = yhat0
         end
-        res_time[i, 2] = @elapsed Ghat, LOSS = py_train_G_lambda(y, #y .- μy, 
-                                                            B, L, K = M, nepoch = 0, η = η, 
-                                                            figname = ifelse(fig, "$figfolder/loss-$f-$σ-$i.png", nothing), 
-                                                            amsgrad = amsgrad, γ = γ, η0 = η0, 
-                                                            use_torchsort = use_torchsort,
-                                                            sort_reg_strength = sort_reg_strength,
-                                                            gpu_id = gpu_id,
-                                                            nhidden = nhidden, depth = depth,
-                                                            patience = patience, cooldown = cooldown,
-                                                            percent_warm_up = percent_warm_up,
-                                                            decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, warm_up = niter, λl = λs[1], λu = λs[end])
+        res_time[i, 2] = @elapsed begin 
+            if backend == "pytorch"
+                Ghat, LOSS = py_train_G_lambda(y, #y .- μy, 
+                                                                B, L, K = M, nepoch = 0, η = η, 
+                                                                figname = ifelse(fig, "$figfolder/loss-$f-$σ-$i.png", nothing), 
+                                                                amsgrad = amsgrad, γ = γ, η0 = η0, 
+                                                                use_torchsort = use_torchsort,
+                                                                sort_reg_strength = sort_reg_strength,
+                                                                gpu_id = gpu_id,
+                                                                nhidden = nhidden, depth = depth,
+                                                                patience = patience, cooldown = cooldown,
+                                                                percent_warm_up = percent_warm_up,
+                                                                decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, warm_up = niter, λl = λs[1], λu = λs[end])
+            else
+                Ghat, LOSS = train_G(y, B, L)
+            end
+        end
         if fig
             fitfig = scatter(x, y, legend=:topleft, label="", title="seed = $seed, J = $J")
             idx = sortperm(x)
@@ -268,6 +275,55 @@ function check_acc(; n = 100, σ = 0.1, f = exp,
     end
     serialize("acc-$f-n$n-σ$σ-nrep$nrep-M$M-η0$η0-niter$niter-$timestamp.sil", [res_err, res_time])
     return mean(res_err, dims=1)[1,:,:]#, mean(res_time)
+end
+
+"""
+    train_G(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMatrix; λl, λu)
+
+Train MLP generator G(λ) for λ ∈ [λl, λu].
+"""
+function train_G(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMatrix; dim_λ = 8, 
+                                        activation = gelu,
+                                        nhidden = 100,
+                                        M = 10,
+                                        niter_per_epoch = 100, nepoch = 3,
+                                        device = :cpu,
+                                        λl = 1e-4, λu = 1e-3, kw...)
+    device = eval(device)
+    y = device(rawy)
+    B = device(rawB)
+    L = device(rawL)
+    n, J = size(B)
+    G = Chain(Dense(n + dim_λ => nhidden, activation), 
+        Dense(nhidden => nhidden, activation),
+        Dense(nhidden => nhidden, activation), 
+        Dense(nhidden => J),
+        sort
+    ) |> device
+    opt = AMSGrad()
+    aug(λ::AbstractFloat) = [λ, cbrt(λ), exp(λ), sqrt(λ), log(λ), 10*λ, λ^2, λ^3]
+    loss(λ::AbstractFloat) = Flux.Losses.mse(B * G(vcat(y, aug(λ))), y) + λ * sum((L' * G(vcat(y, aug(λ))) ).^2) / n
+    losses(λs::Vector) = mean([loss(λ) for λ in λs])
+    train_losses = Float64[]
+    for epoch in 1:nepoch
+        for i in 1:niter_per_epoch
+            λs = rand(M) * (λu - λl) .+ λl
+            Flux.train!(losses, Flux.params(G), [λs], opt)
+            append!(train_losses, losses(λs))
+        end
+    end
+    return (y, λ) -> B * cpu(G)(vcat(y, aug(λ))), train_losses
+end
+
+"""
+    mono_ss_mlp(x::AbstractVector, y::AbstractVector; λl, λu)
+
+Fit monotone smoothing spline by training a MLP generator.
+"""
+function mono_ss_mlp(x::AbstractVector, y::AbstractVector; prop_nknots = 0.2, backend = "flux", λl = 1e-5, λu = 1e-4, kw...)
+    B, Bnew, L, J = build_model(x, true, prop_nknots = prop_nknots)
+    Ghat, LOSS = train_G(y, B, L; λl = λl, λu = λu, kw...)
+    return Ghat, LOSS
 end
 
 function train_G(rawx, rawy, rawB, rawL, λ;  nepoch = 100, σ = 0.1, K = 10, 

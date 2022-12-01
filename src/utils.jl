@@ -12,11 +12,15 @@ It returns four vectors, `x, y, x0, y0`, where
 - `x, y`: pair points of length `n`.
 - `x0, y0`: true curve without noise, represented by `k*n` points.
 """
-function gen_data(n::Int, σ::Real, f::Function; k=10, xmin = -1, xmax = 1)
-    x0 = sort(rand(k*n-(k-1)) * (xmax - xmin) .+ xmin)
+function gen_data(n::Int, σ::Real, f::Function; k=10, xmin = -1, xmax = 1, seed = -1)
+    if seed == -1
+        seed = Int(rand(UInt8))
+    end
+    rng = MersenneTwister(seed)
+    x0 = sort(rand(rng, k*n-(k-1)) * (xmax - xmin) .+ xmin)
     y0 = f.(x0)
     x = x0[1:k:end]
-    y = y0[1:k:end] + randn(n) * σ
+    y = y0[1:k:end] + randn(rng, n) * σ
     return x, y, x0, y0
 end
 

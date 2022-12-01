@@ -5,7 +5,7 @@ using MonotoneSplines
 using Literate
 indir = joinpath(@__DIR__, "..", "examples")
 outdir = joinpath(@__DIR__, "src", "examples")
-files = ["monofit.jl"]
+files = ["monofit.jl", "monofit_mlp.jl"]
 for file in files
     Literate.markdown(joinpath(indir, file), outdir; credit = false)
 end
@@ -15,7 +15,7 @@ makedocs(sitename="MonotoneSplines.jl",
             "Home" => "index.md",
             "Examples" => [
                 "Monotone Fitting" => "examples/monofit.md",
-                # "GMS" => "examples/GMS.md"
+                "MLP Generator" => "examples/monofit_mlp.md"
             ],
             "API" => "api.md"
         ]

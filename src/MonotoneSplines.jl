@@ -22,6 +22,14 @@ end
 export check_CI,
        check_acc,
         cubic,
-        logit
+        logit,
+        mono_ss,
+        mono_ss_mlp,
+        gen_data
+
+if Base.VERSION >= v"1.4.2"
+    include("precompile.jl")
+    __precompile__()
+end
 
 end # module MonotoneSplines

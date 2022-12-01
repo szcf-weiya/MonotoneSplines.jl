@@ -5,3 +5,4 @@ Manifest.toml
 *.sil
 *.png
 docs/build
+docs/src/examples
