@@ -23,7 +23,7 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
                         γ = 0.9,
                         η0 = 0.0001,
                         demo = false,
-                        max_norm = 2.0, clip_ratio = 1.0,
+                        max_norm = 2000.0, clip_ratio = 1000.0,
                         debug_with_y0 = false,
                         decay_step = round(Int, 1 / η),
                         nepoch0 = 100, N1 = 100, N2 = 100,
@@ -124,7 +124,7 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
             for (j, λ) in enumerate(λs)
                 _, YCI = MonotoneSplines.ci_mono_ss(x, y, λ, prop_nknots=prop_nknots)
                 RES_YCI0[j] = YCI
-                yhat = B * Ghat(y, λ)
+                yhat = Ghat(y, λ)
                 Yhat[j, :] .= yhat
                 rel_gap = Flux.Losses.mse(Yhat0[j, :], yhat) / Flux.Losses.mse(Yhat0[j, :], zeros(n))
                 fit_ratio = Flux.Losses.mse(yhat, y) / Flux.Losses.mse(Yhat0[j, :], y)
@@ -167,10 +167,18 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
         if fig
             if cvλ
                 savefig(plot(log.(λs), log.(errs)), "$figfolder/cv-$f-$i.png")
-                run(`ssh sandbox convert $figfolder/cv-$f-$i.png $figfolder/fit-$f-$i.png $figfolder/loss-$f-$i.png +append $figfolder/$f-$i.png`)
+                if strip(read(`hostname`, String)) == "chpc-gpu019"
+                    run(`ssh sandbox convert $figfolder/cv-$f-$i.png $figfolder/fit-$f-$i.png $figfolder/loss-$f-$i.png +append $figfolder/$f-$i.png`)
+                else
+                    run(`convert $figfolder/cv-$f-$i.png $figfolder/fit-$f-$i.png $figfolder/loss-$f-$i.png +append $figfolder/$f-$i.png`)
+                end
             else
                 # run(`ssh sandbox convert $figfolder/fit-$f-$σ-$i.png $figfolder/loss-$f-$σ-$i.png +append $figfolder/$f-$σ-$i.png`)
-                run(`ssh sandbox convert $figfolder/cp-$f-$σ-$i.png $figfolder/err-$f-$σ-$i.png $figfolder/fit-$f-$σ-$i.png $figfolder/loss-$f-$σ-$i.png +append $figfolder/$f-$σ-$i.png`)
+                if strip(read(`hostname`, String)) == "chpc-gpu019"
+                    run(`ssh sandbox convert $figfolder/cp-$f-$σ-$i.png $figfolder/err-$f-$σ-$i.png $figfolder/fit-$f-$σ-$i.png $figfolder/loss-$f-$σ-$i.png +append $figfolder/$f-$σ-$i.png`)
+                else
+                    run(`convert $figfolder/cp-$f-$σ-$i.png $figfolder/err-$f-$σ-$i.png $figfolder/fit-$f-$σ-$i.png $figfolder/loss-$f-$σ-$i.png +append $figfolder/$f-$σ-$i.png`)
+                end
             end
         end                    
     end
@@ -244,7 +252,7 @@ function check_acc(; n = 100, σ = 0.1, f = exp,
             idx = sortperm(x)
         end
         res_time[i, 3] = @elapsed for (j, λ) in enumerate(λs)
-            yhat = B * Ghat(y, λ) #.+ μy
+            yhat = Ghat(y, λ)
             if demo
                 Yhat[j, :] = yhat
             end
@@ -587,12 +595,10 @@ function sample_G_λ(G, B::AbstractMatrix{T}, x::AbstractVector{T}, y::AbstractV
     RES_YCI = Array{Any, 1}(undef, nλ)
     RES_Yhat = Array{Any, 1}(undef, nλ)
     for (i, λ) in enumerate(λs)
-        γhat = G(y, λ) 
-        yhat = B * γhat
+        yhat = G(y, λ) 
         σhat = std(y - yhat)
         Ystar = hcat([yhat + randn(n) * σhat for _ in 1:nB]...)
-        Γhat = hcat([G(Ystar[:, j], λ) for j in 1:nB]...)
-        Yhat = B * Γhat
+        Yhat = hcat([G(Ystar[:, j], λ) for j in 1:nB]...)
         # idx = sortperm(x)
         YCI = hcat([quantile(t, [α/2, 1-α/2]) for t in eachrow(Yhat)]...)'
         RES_YCI[i] = YCI

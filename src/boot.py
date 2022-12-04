@@ -4,6 +4,7 @@ import numpy as np
 import tqdm as tqdm
 import pickle
 import torchsort
+import copy
 from pytorchtools import EarlyStopping
 # https://github.com/pytorch/pytorch/issues/45038#issuecomment-695793213
 # too slow
@@ -239,17 +240,18 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
     # step 2 
     # ##########
     model.load_state_dict(torch.load(model_file))
+    model0 = copy.deepcopy(model)
     early_stopping2 = EarlyStopping(patience = patience, verbose = False, path = model_file)
     # for epoch in range(nepoch):
     for epoch in range(nepoch):
         pbar = tqdm.trange(niter_per_epoch, desc="Training G(y, lambda)")
-        for ii in range(niter_per_epoch):
+        for ii in pbar:
             loss2 = 0
             for i in range(K0): # for each lam
                 lam = np.random.rand() * (lam_up - lam_lo) + lam_lo
                 aug_lam = torch.tensor([lam, lam**(1/3), np.exp(lam), np.sqrt(lam), np.log(lam), 10*lam, lam**2, lam**3], dtype=torch.float32).to(device)
                 ylam = torch.cat((y, aug_lam.repeat((1, 1))), dim=1)
-                beta = model(ylam)
+                beta = model0(ylam) # do not influence by step 2
                 ypred = torch.matmul(beta, B.t())
                 sigma = torch.std(ypred.detach() - y, unbiased = True)
                 epsilons = torch.randn((K, n)).to(device) * sigma
@@ -269,6 +271,7 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
             opt2.step()
             sch2.step()
             train_loss.append(loss2.item() / K0)
+            pbar.set_postfix(iter = ii, loss = loss2.item() / K0)
             if ii == niter_per_epoch - 1:
                 LOSS[epoch, 0] = loss2.item() / K0
         for i in range(3):
@@ -282,7 +285,6 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
         print(f"epoch = {epoch}, L(lam) = {LOSS[epoch, 0]:.6f}, L(lam_lo) = {LOSS[epoch, 1]:.6f}, L(lam_up) = {LOSS[epoch, 2]:.6f}")
         if epoch > cooldown2:
             early_stopping2(LOSS[epoch, 1:].mean(), model)
-        pbar.set_postfix(epoch = epoch, loss = LOSS[epoch, 0].item())
         if early_stopping2.early_stop:
             print("Early stopping!")
             LOSS = LOSS[:epoch,:]
