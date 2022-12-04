@@ -18,12 +18,8 @@ jobs:
           sudo apt install libcurl4-openssl-dev
           sudo apt-get install libmpfr-dev
 
-      # https://github.com/szcf-weiya/Cell-Video/commit/8b81175b4d503057f59f809d05fb3707cc9f3d28#comments
       - name: Install Dependencies for R
         run: |
-          install.packages("remotes")
-          remotes::install_github("szcf-weiya/prin_curve", auth_token="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")
-          install.packages("CVXR")
           install.packages("fda")
           install.packages("lsei")
           install.packages("Iso")
@@ -34,7 +30,7 @@ jobs:
 
       - uses: julia-actions/setup-julia@latest
         with:
-          version: '1.7'
+          version: '1.8'
       
       - uses: actions/setup-python@v2
         with:
@@ -50,7 +46,7 @@ jobs:
           pip3 install tqdm
 
       - name: Install dependencies
-        run: julia --project=docs/ -e 'using Pkg; Pkg.add(url="https://github.com/szcf-weiya/Xfunc.jl"); Pkg.develop(PackageSpec(path=pwd())); Pkg.instantiate()'
+        run: julia --project=docs/ -e 'using Pkg; Pkg.develop(PackageSpec(path=pwd())); Pkg.instantiate()'
       - name: Build and deploy
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # If authenticating with GitHub Actions token

@@ -29,7 +29,7 @@ export check_CI,
 
 if Base.VERSION >= v"1.4.2"
     include("precompile.jl")
-    __precompile__()
+    _precompile_()
 end
 
 end # module MonotoneSplines

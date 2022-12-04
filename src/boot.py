@@ -38,14 +38,15 @@ class Model(nn.Module):
 
 # two different optimizers
 # support lambda
-def train_G(y, B, L, lam, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta0 = 0.0001, gamma = 0.9, sigma = 1, amsgrad = False, decay_step = 1000, max_norm = 2.0, clip_ratio = 1.0, debug_with_y0 = False, y0 = 0, warm_up = 100, subsequent_steps = True, N1 = 100, N2 = 100, gpu_id = 0):
-    #
-    # device = "cuda" if torch.cuda.is_available() else "cpu"
-    if torch.cuda.is_available():
-        # torch.cuda.set_device(3)
-        device = f"cuda:{gpu_id}"
-    else:
+def train_G(y, B, L, lam, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta0 = 0.0001, gamma = 0.9, sigma = 1, amsgrad = False, decay_step = 1000, max_norm = 2.0, clip_ratio = 1.0, debug_with_y0 = False, y0 = 0, nepoch0 = 100, subsequent_steps = True, N1 = 100, N2 = 100, gpu_id = 0):
+    if gpu_id == -1:
         device = "cpu"
+    else:
+        if torch.cuda.is_available():
+            # torch.cuda.set_device(3)
+            device = f"cuda:{gpu_id}"
+        else:
+            device = "cpu"
     y = torch.from_numpy(y[None, :]).to(device)
     if debug_with_y0:
         y0 = torch.from_numpy(y0[None, :]).to(device)
@@ -61,8 +62,8 @@ def train_G(y, B, L, lam, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta
     # just realized that pytorch also did not do sort in batch
     n12 = max(N1, N2)
     LOSS = torch.zeros(nepoch*n12, 2)
-    LOSS0 = torch.zeros(warm_up)
-    pbar0 = tqdm.trange(warm_up, desc="Training G (warm up)")
+    LOSS0 = torch.zeros(nepoch0)
+    pbar0 = tqdm.trange(nepoch0, desc="Training G (warm up)")
     for epoch in pbar0:
         beta = model(y)
         ypred = torch.matmul(beta, B.t())
@@ -160,17 +161,18 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
                     nhidden = 1000, eta = 0.001, eta0 = 0.0001, 
                     gamma = 0.9, sigma = 1, amsgrad = False, 
                     decay_step = 1000, max_norm = 2.0, clip_ratio = 1.0, 
-                    debug_with_y0 = False, y0 = 0, warm_up = 100, 
+                    debug_with_y0 = False, y0 = 0, 
+                    nepoch0 = 100,
                     subsequent_steps = True, N1 = 100, N2 = 100, 
                     lam_lo = 1e-9, lam_up = 1e-4, use_torchsort = False, 
                     sort_reg_strength = 0.1, gpu_id = 0, 
                     patience = 100, cooldown=100, 
-                    percent_warm_up = 10, depth = 2, 
+                    depth = 2, 
                     model_file = "model_G.pt", 
                     niter_per_epoch = 100, cooldown2 = 10,
                     patience2 = 100):
     #
-    device = f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu"
+    device = f"cuda:{gpu_id}" if torch.cuda.is_available() and gpu_id != -1 else "cpu"
     y = torch.from_numpy(y[None, :]).to(device)
     if debug_with_y0:
         y0 = torch.from_numpy(y0[None, :]).to(device)
@@ -188,17 +190,17 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
     loss_fn = nn.functional.mse_loss
     # just realized that pytorch also did not do sort in batch
     LOSS = torch.zeros(nepoch, 4).to(device)
-    LOSS0 = torch.zeros(warm_up, 4).to(device)
+    LOSS0 = torch.zeros(nepoch0, 4).to(device)
     query_lams = [lam_lo, lam_up, (lam_lo + lam_up) / 2]
-    pbar0 = tqdm.trange(warm_up, desc="Training G (warm up)")
-    train_losses = []
+    train_loss = []
     early_stopping1 = EarlyStopping(patience = patience, verbose = False, path = model_file)
-    for epoch in pbar0:
-        # if epoch < stage_warm_up:
+    for epoch in range(nepoch0):
+        pbar0 = tqdm.trange(niter_per_epoch, desc="Training G(lambda)")
+        # if epoch < stage_nepoch0:
         #     lams = torch.ones((K, 1)).to(device) * lam_lo #* (lam_up + lam_lo) / 2
         # else:
         #     lams = torch.rand((K, 1)).to(device) * (lam_up - lam_lo) + lam_lo
-        for ii in range(niter_per_epoch):
+        for ii in pbar0:
             lams = torch.rand((K, 1)).to(device) * (lam_up - lam_lo) + lam_lo
             ys = torch.cat((y.repeat( (K, 1) ), lams, torch.pow(lams, 1/3), torch.exp(lams), torch.sqrt(lams), 
                                                 torch.log(lams), 10*lams, torch.square(lams), torch.pow(lams, 3)), dim = 1) # repeat works regardless of y has been augmented via `y[None, :]`
@@ -212,11 +214,11 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
             loss1.backward()
             nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_norm)
             opt1.step()
-            train_losses.append(loss1.item())
+            train_loss.append(loss1.item())
+            pbar0.set_postfix(iter = ii, loss = loss1.item())
             if ii == niter_per_epoch - 1:
                 LOSS0[epoch, 0] = loss1.item()
         
-        # LOSS0[epoch, 0] = np.average(train_losses) # train loss per epoch
         for i in range(3):
             lam = query_lams[i]
             aug_lam = torch.tensor([lam, lam**(1/3), np.exp(lam), np.sqrt(lam), np.log(lam), 10*lam, lam**2, lam**3], dtype=torch.float32).to(device)
@@ -224,11 +226,11 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
             beta = model(ylam)
             ypred = torch.matmul(beta, B.t())
             LOSS0[epoch, i+1] = loss_fn(ypred, y) + lam * torch.square(torch.matmul(beta, L)).mean() * J / n
+        print(f"epoch = {epoch}, L(lam) = {LOSS0[epoch, 0]:.6f}, L(lam_lo) = {LOSS0[epoch, 1]:.6f}, L(lam_up) = {LOSS0[epoch, 2]:.6f}")
         if epoch > cooldown:
             sch1.step(LOSS0[epoch, 1:].mean())
         # sch1.step()
         early_stopping1(LOSS0[epoch, 1:].mean(), model)
-        pbar0.set_postfix(epoch = epoch, loss = loss1.item(), lr = opt1.param_groups[0]['lr'])
         if early_stopping1.early_stop:
             print("Early stopping!")
             LOSS0 = LOSS0[:epoch,:]
@@ -237,11 +239,10 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
     # step 2 
     # ##########
     model.load_state_dict(torch.load(model_file))
-    pbar = tqdm.trange(nepoch, desc="Training G")
     early_stopping2 = EarlyStopping(patience = patience, verbose = False, path = model_file)
-    train_losses = []
     # for epoch in range(nepoch):
-    for epoch in pbar:
+    for epoch in range(nepoch):
+        pbar = tqdm.trange(niter_per_epoch, desc="Training G(y, lambda)")
         for ii in range(niter_per_epoch):
             loss2 = 0
             for i in range(K0): # for each lam
@@ -267,10 +268,9 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
             # nn.utils.clip_grad_value_(model.parameters(), max_norm)
             opt2.step()
             sch2.step()
-            train_losses.append(loss2.item() / K0)
+            train_loss.append(loss2.item() / K0)
             if ii == niter_per_epoch - 1:
                 LOSS[epoch, 0] = loss2.item() / K0
-        # LOSS[epoch, 0] = np.average(train_losses)
         for i in range(3):
             lam = query_lams[i]
             aug_lam = torch.tensor([lam, lam**(1/3), np.exp(lam), np.sqrt(lam), np.log(lam), 10*lam, lam**2, lam**3], dtype=torch.float32).to(device)
@@ -279,6 +279,7 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
             ypred = torch.matmul(beta, B.t())
             LOSS[epoch, i+1] = loss_fn(ypred, y) + lam * torch.square(torch.matmul(beta, L)).mean() * J / n
 
+        print(f"epoch = {epoch}, L(lam) = {LOSS[epoch, 0]:.6f}, L(lam_lo) = {LOSS[epoch, 1]:.6f}, L(lam_up) = {LOSS[epoch, 2]:.6f}")
         if epoch > cooldown2:
             early_stopping2(LOSS[epoch, 1:].mean(), model)
         pbar.set_postfix(epoch = epoch, loss = LOSS[epoch, 0].item())
@@ -297,7 +298,7 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
         ret_loss = loss_warmup
     else:
         ret_loss = np.r_[loss_warmup, loss_boot]
-    return G, ret_loss 
+    return G, train_loss, ret_loss
 
 def load_model(n, dim_lam, J, nhidden, model_file, gpu_id = 3):
     device = f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu"
@@ -306,7 +307,7 @@ def load_model(n, dim_lam, J, nhidden, model_file, gpu_id = 3):
     G = lambda y: model(torch.from_numpy(y[None,:]).to(device)).cpu().detach().numpy().squeeze()
     return G
 
-def train_G_bp(y, B, L, lam, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta0 = 0.0001, gamma = 0.9, sigma = 1, amsgrad = False, decay_step = 1000, max_norm = 2.0, clip_ratio = 1.0, debug_with_y0 = False, y0 = 0, warm_up = 100, subsequent_steps = True):
+def train_G_bp(y, B, L, lam, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta0 = 0.0001, gamma = 0.9, sigma = 1, amsgrad = False, decay_step = 1000, max_norm = 2.0, clip_ratio = 1.0, debug_with_y0 = False, y0 = 0, nepoch0 = 100, subsequent_steps = True):
     #
     device = "cuda" if torch.cuda.is_available() else "cpu"
     y = torch.from_numpy(y[None, :]).to(device)
@@ -323,9 +324,9 @@ def train_G_bp(y, B, L, lam, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, 
     loss_fn = nn.functional.mse_loss
     # just realized that pytorch also did not do sort in batch
     LOSS = torch.zeros(nepoch, 2)
-    LOSS0 = torch.zeros(warm_up)
+    LOSS0 = torch.zeros(nepoch0)
     pbar = tqdm.trange(nepoch, desc="Training G")
-    pbar0 = tqdm.trange(warm_up, desc="Training G (warm up)")
+    pbar0 = tqdm.trange(nepoch0, desc="Training G (warm up)")
     for epoch in pbar0:
         beta = model(y)
         ypred = torch.matmul(beta, B.t())

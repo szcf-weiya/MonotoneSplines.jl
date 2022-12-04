@@ -26,7 +26,7 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
                         max_norm = 2.0, clip_ratio = 1.0,
                         debug_with_y0 = false,
                         decay_step = round(Int, 1 / η),
-                        warm_up = 100, N1 = 100, N2 = 100,
+                        nepoch0 = 100, N1 = 100, N2 = 100,
                         seed = 1234,
                         prop_nknots = 1.0,
                         nhidden = 1000, depth = 2,
@@ -80,7 +80,7 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
             if method == "pytorch"
                 #Ghat = py_train_G(y, B, K = K, nepoch = nepoch, η = η, σ = σ0)
                 Ghat = py_train_G(y, B, L, λ, K = K, nepoch = nepoch, η = η, σ = σ0, figname = ifelse(fig, "$figfolder/loss-$f-$i.png", nothing), amsgrad = amsgrad, γ = γ, η0 = η0, decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio,
-                debug_with_y0 = debug_with_y0, y0 = f.(x), warm_up = warm_up, N1 = N1, N2 = N2)
+                debug_with_y0 = debug_with_y0, y0 = f.(x), nepoch0 = nepoch0, N1 = N1, N2 = N2)
             elseif method == "jl_lambda"
                 Ghat = train_G(x, y, B, L, λ, K = K, σ = σ0, nepoch = nepoch, nB = nB, η = η)
             elseif method == "lambda"
@@ -94,10 +94,10 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
                                                 gpu_id = gpu_id,
                                                 nhidden = nhidden, depth = depth,
                                                 niter_per_epoch = niter_per_epoch, cooldown2 = cooldown2,
-                                                model_file = "model-$f-$σ-$i-$seed-$timestamp.pt",
+                                                model_file = "model-$f-$σ-n$n-J$J-nhidden$nhidden-$i-$seed-$timestamp.pt",
                                                 patience = patience, cooldown = cooldown,
                                                 decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, 
-                                                warm_up = warm_up, λl = λs[1], λu = λs[end])
+                                                nepoch0 = nepoch0, λl = λs[1], λu = λs[end])
             elseif method == "lambda_from_file"
                 # gpu is much faster
                 Ghat = load_model(n, J, nhidden, model_file, gpu_id = gpu_id)
@@ -124,8 +124,7 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
             for (j, λ) in enumerate(λs)
                 _, YCI = MonotoneSplines.ci_mono_ss(x, y, λ, prop_nknots=prop_nknots)
                 RES_YCI0[j] = YCI
-                λ_aug = [λ, cbrt(λ), exp(λ), sqrt(λ), log(λ), 10*λ, λ^2, λ^3]
-                yhat = B * Ghat(vcat(y, λ_aug))
+                yhat = B * Ghat(y, λ)
                 Yhat[j, :] .= yhat
                 rel_gap = Flux.Losses.mse(Yhat0[j, :], yhat) / Flux.Losses.mse(Yhat0[j, :], zeros(n))
                 fit_ratio = Flux.Losses.mse(yhat, y) / Flux.Losses.mse(Yhat0[j, :], y)
@@ -190,7 +189,6 @@ function check_acc(; n = 100, σ = 0.1, f = exp,
                         use_torchsort = false, sort_reg_strength = 0.1,
                         gpu_id = 0,
                         patience = 100, cooldown = 100,
-                        percent_warm_up = 10,
                         prop_nknots = 1.0,
                         demo = false,
                         max_norm = 2.0, clip_ratio = 1.0, decay_step=1000, amsgrad = true, γ = 1.0,
@@ -236,8 +234,7 @@ function check_acc(; n = 100, σ = 0.1, f = exp,
                                                                 gpu_id = gpu_id,
                                                                 nhidden = nhidden, depth = depth,
                                                                 patience = patience, cooldown = cooldown,
-                                                                percent_warm_up = percent_warm_up,
-                                                                decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, warm_up = niter, λl = λs[1], λu = λs[end])
+                                                                decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, nepoch0 = niter, λl = λs[1], λu = λs[end])
             else
                 Ghat, LOSS = train_G(y, B, L)
             end
@@ -247,8 +244,7 @@ function check_acc(; n = 100, σ = 0.1, f = exp,
             idx = sortperm(x)
         end
         res_time[i, 3] = @elapsed for (j, λ) in enumerate(λs)
-            λ_aug = [λ, cbrt(λ), exp(λ), sqrt(λ), log(λ), 10*λ, λ^2, λ^3]
-            yhat = B * Ghat(vcat(y, λ_aug)) #.+ μy
+            yhat = B * Ghat(y, λ) #.+ μy
             if demo
                 Yhat[j, :] = yhat
             end
@@ -278,6 +274,13 @@ function check_acc(; n = 100, σ = 0.1, f = exp,
 end
 
 """
+    aug(λ)
+
+Augment `λ` with 8 different functions.
+"""
+aug(λ::AbstractFloat) = [λ, cbrt(λ), exp(λ), sqrt(λ), log(λ), 10*λ, λ^2, λ^3]
+
+"""
     train_G(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMatrix; λl, λu)
 
 Train MLP generator G(λ) for λ ∈ [λl, λu].
@@ -301,7 +304,6 @@ function train_G(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMatri
         sort
     ) |> device
     opt = AMSGrad()
-    aug(λ::AbstractFloat) = [λ, cbrt(λ), exp(λ), sqrt(λ), log(λ), 10*λ, λ^2, λ^3]
     loss(λ::AbstractFloat) = Flux.Losses.mse(B * G(vcat(y, aug(λ))), y) + λ * sum((L' * G(vcat(y, aug(λ))) ).^2) / n
     losses(λs::Vector) = mean([loss(λ) for λ in λs])
     train_losses = Float64[]
@@ -320,9 +322,15 @@ end
 
 Fit monotone smoothing spline by training a MLP generator.
 """
-function mono_ss_mlp(x::AbstractVector, y::AbstractVector; prop_nknots = 0.2, backend = "flux", λl = 1e-5, λu = 1e-4, kw...)
+function mono_ss_mlp(x::AbstractVector, y::AbstractVector; prop_nknots = 0.2, backend = "flux", λl = 1e-5, λu = 1e-4, device = :cpu, kw...)
     B, Bnew, L, J = build_model(x, true, prop_nknots = prop_nknots)
-    Ghat, LOSS = train_G(y, B, L; λl = λl, λu = λu, kw...)
+    if backend == "flux"
+        Ghat, LOSS = train_G(y, B, L; λl = λl, λu = λu, device = device, kw...)
+    else
+        Ghat, LOSS = py_train_G_lambda(y, B, L; nepoch = 0, nepoch0 = 3, 
+                                                λl = λl, λu = λu, 
+                                                gpu_id = ifelse(device == :cpu, -1, 0), kw...)
+    end
     return Ghat, LOSS
 end
 
@@ -579,12 +587,11 @@ function sample_G_λ(G, B::AbstractMatrix{T}, x::AbstractVector{T}, y::AbstractV
     RES_YCI = Array{Any, 1}(undef, nλ)
     RES_Yhat = Array{Any, 1}(undef, nλ)
     for (i, λ) in enumerate(λs)
-        aug_λ = [λ, cbrt(λ), exp(λ), sqrt(λ), log(λ), 10*λ, λ^2, λ^3]
-        γhat = G(vcat(y, aug_λ)) 
+        γhat = G(y, λ) 
         yhat = B * γhat
         σhat = std(y - yhat)
         Ystar = hcat([yhat + randn(n) * σhat for _ in 1:nB]...)
-        Γhat = hcat([G(vcat(Ystar[:, j], aug_λ) ) for j in 1:nB]...)
+        Γhat = hcat([G(Ystar[:, j], λ) for j in 1:nB]...)
         Yhat = B * Γhat
         # idx = sortperm(x)
         YCI = hcat([quantile(t, [α/2, 1-α/2]) for t in eachrow(Yhat)]...)'
@@ -639,12 +646,12 @@ function py_train_G(y::AbstractVector, B::AbstractMatrix, L::AbstractMatrix, λ:
                             max_norm = 2.0, clip_ratio = 1.0,
                             decay_step = Int(1 / η),
                             debug_with_y0 = false, y0 = 0, 
-                            warm_up = 100, N1 = 100, N2 = 100,
+                            nepoch0 = 100, N1 = 100, N2 = 100,
                             figname = "pyloss.png" # not plot if nothing
                             )
     # Ghat, LOSS1, LOSS2 = py"train_G"(Float32.(y), Float32.(B), eta = η, K = K, nepoch = nepoch, sigma = σ)
     # Ghat, LOSS = py"train_G"(Float32.(y), Float32.(B), Float32.(L), λ, eta = η, K = K, nepoch = nepoch, sigma = σ)
-    Ghat, LOSS = _py_boot."train_G"(Float32.(y), Float32.(B), Float32.(L), λ, eta = η, K = K, nepoch = nepoch, sigma = σ, amsgrad = amsgrad, gamma = γ, eta0 = η0, decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, debug_with_y0 = debug_with_y0, y0 = Float32.(y0), warm_up = warm_up, N1 = N1, N2 = N2)
+    Ghat, LOSS = _py_boot."train_G"(Float32.(y), Float32.(B), Float32.(L), λ, eta = η, K = K, nepoch = nepoch, sigma = σ, amsgrad = amsgrad, gamma = γ, eta0 = η0, decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, debug_with_y0 = debug_with_y0, y0 = Float32.(y0), nepoch0 = nepoch0, N1 = N1, N2 = N2)
     # savefig(plot(
     #     # plot(log.(LOSS1)),
     #     # plot(log.(LOSS2)),
@@ -664,9 +671,8 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
                             max_norm = 2.0, clip_ratio = 1.0,
                             decay_step = Int(1 / η),
                             patience = 100, cooldown=100,
-                            percent_warm_up = 10,
                             debug_with_y0 = false, y0 = 0, 
-                            warm_up = 100, N1 = 100, N2 = 100,
+                            nepoch0 = 100, N1 = 100, N2 = 100,
                             λl = 1e-9, λu = 1e-4,
                             use_torchsort = false,
                             sort_reg_strength = 0.1,
@@ -682,25 +688,55 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
                                             nepoch = nepoch, sigma = σ, amsgrad = amsgrad, 
                                             gamma = γ, eta0 = η0, 
                                             decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, debug_with_y0 = debug_with_y0, y0 = Float32.(y0), 
-                                            warm_up = warm_up, N1 = N1, N2 = N2, 
+                                            nepoch0 = nepoch0, N1 = N1, N2 = N2, 
                                             lam_lo = λl, lam_up = λu, 
                                             model_file = model_file,
                                             use_torchsort = use_torchsort, sort_reg_strength=sort_reg_strength, 
                                             gpu_id = gpu_id, patience=patience, cooldown=cooldown, 
                                             niter_per_epoch = niter_per_epoch, cooldown2 = cooldown2,
-                                            percent_warm_up = percent_warm_up, nhidden = nhidden, depth = depth)#::Tuple{PyObject, PyArray}
+                                            nhidden = nhidden, depth = depth)#::Tuple{PyObject, PyArray}
     #println(typeof(py_ret)) #Tuple{PyCall.PyObject, Matrix{Float32}} 
     # ....................... # Tuple{PyCall.PyObject, PyCall.PyArray{Float32, 2}}
     #LOSS = Matrix(py_ret[2]) # NB: not necessarily a matrix, but possibly a matrix
     if !isnothing(figname)
         savefig(plot(log.(LOSS)), figname)
     end
-    return y -> py"$Ghat"(Float32.(y)), LOSS
+    return (y, λ) -> B * py"$Ghat"(Float32.(vcat(y, aug(λ)))), LOSS
     #return y -> py"$(py_ret[1])"(Float32.(y)), LOSS
 end
 
+"""
+    load_model(n::Int, J::Int, nhidden::Int, model_file::String; dim_lam = 8, gpu_id = 3)
 
+Load trained model from `model_file`.
+"""
+function load_model(model_file::String; dim_lam = 8, gpu_id = 3)
+    params = split_keystr(basename(model_file))
+    n = params["n"]
+    J = params["J"]
+    nhidden = params["nhidden"]
+    Ghat = _py_boot."load_model"(n, dim_lam, J, nhidden, model_file, gpu_id)
+    return (y, λ) -> B * py"$Ghat"(Float32.(vcat(y, aug(λ))))
+end
+
+# deprecated
 function load_model(n::Int, J::Int, nhidden::Int, model_file::String; dim_lam = 8, gpu_id = 3)
     Ghat = _py_boot."load_model"(n, dim_lam, J, nhidden, model_file, gpu_id)
-    return y -> py"$Ghat"(Float32.(y))
+    return (y, λ) -> B * py"$Ghat"(Float32.(vcat(y, aug(λ))))
+end
+
+# adopt from https://github.com/szcf-weiya/Xfunc.jl/blob/0778903310bd9bc82880d55e640cd1888baaa599/src/str.jl#L31-L46
+function split_keystr(x::String)
+    xs = split(x, "-")
+    res = Dict()
+    for y in xs
+        try
+            ys = match(r"([a-zA-Z]+)(.*)", y).captures
+            if ys[2] != ""
+                res[ys[1]] = parse(Int, ys[2])
+            end
+        catch e
+        end
+    end
+    return res
 end

@@ -9,13 +9,20 @@ x, y, x0, y0 = gen_data(n, σ, exp, seed = 1234);
 # ## single lambda
 # Here we train a MLP network $G(\lambda = λ_0)$ to approximate the solution $\hat\gamma_{\lambda_0}$.
 λ = 1e-5
+
+# By default, we use `Flux` deep learning framework,
 @time Ghat, loss = mono_ss_mlp(x, y, λl = λ, λu = λ, device = :cpu, prop_nknots = 0.2);
 
-# plot the training loss
-plot(loss)
+# we also support Pytorch backend
+@time Ghat2, loss2 = mono_ss_mlp(x, y, λl = λ, λu = λ, device = :cpu, prop_nknots = 0.2, backend = "pytorch");
+
+# plot the log training loss
+plot(log.(loss), label = "Flux")
+plot!(log.(loss2), label = "Pytorch")
 
 # Evaluate at $λ$,
 yhat = Ghat(y, λ);
+yhat2 = Ghat2(y, λ);
 
 # compare it with the optimization solution
 βhat0, yhat0 = mono_ss(x, y, λ, prop_nknots = 0.2);
@@ -23,8 +30,9 @@ yhat = Ghat(y, λ);
 # plot the fitted curves
 scatter(x, y, label = "")
 plot!(x0, y0, label = "truth", legend = :topleft, ls = :dot)
-plot!(x, yhat, label = "MLP generator", ls = :dash, lw = 2)
+plot!(x, yhat, label = "MLP generator (Flux)", ls = :dash, lw = 2)
 plot!(x, yhat0, label = "OPT solution")
+plot!(x, yhat2, label = "MLP generator (Pytorch)", ls = :dash, lw = 2)
 # The fitting curves obtained from optimization solution and MLP generator overlap quite well.
 
 # ## lambda interval
