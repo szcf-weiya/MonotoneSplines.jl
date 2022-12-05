@@ -415,6 +415,7 @@ function ci_mono_ss_mlp(x::AbstractVector{T}, y::AbstractVector{T}, λs::Abstrac
                                                                         nepoch0 = 3, nepoch = 3,
                                                                         niter_per_epoch = 100, # can be set via kw...
                                                                         M = 10,
+                                                                        nhidden = 100,
                                                                         device = :cpu, kw...) where T <: AbstractFloat
     B, Bnew, L, J = build_model(x, true, prop_nknots = prop_nknots)
     model_file *= ifelse(backend == "flux", ".bson", ".pt")
@@ -424,6 +425,7 @@ function ci_mono_ss_mlp(x::AbstractVector{T}, y::AbstractVector{T}, λs::Abstrac
         Ghat0, loss0 = train_Gλ(y, B, L; λl = λl, λu = λu,
                                          device = device, model_file = model_file, 
                                          niter_per_epoch = niter_per_epoch,
+                                         nhidden = nhidden,
                                          nepoch = nepoch0, kw...)
         Ghat, loss = train_Gyλ(y, B, L, model_file; device = device, 
                                          nepoch = nepoch, niter_per_epoch = niter_per_epoch,
@@ -434,6 +436,7 @@ function ci_mono_ss_mlp(x::AbstractVector{T}, y::AbstractVector{T}, λs::Abstrac
         Ghat, LOSS = py_train_G_lambda(y, B, L; nepoch = nepoch, nepoch0 = nepoch0, 
                                                 gpu_id = ifelse(device == :cpu, -1, 0), 
                                                 λl = λl, λu = λu,
+                                                nhidden = nhidden,
                                                 niter_per_epoch = niter_per_epoch,
                                                 K = M, K0 = M, kw...)
     end
@@ -760,7 +763,7 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
                             decay_step = Int(1 / η),
                             patience = 100, patience0 = 100, disable_early_stopping = true,
                             debug_with_y0 = false, y0 = 0, 
-                            nepoch0 = 100, N1 = 100, N2 = 100,
+                            nepoch0 = 100,
                             λl = 1e-9, λu = 1e-4,
                             use_torchsort = false,
                             sort_reg_strength = 0.1,
@@ -776,8 +779,9 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
                                             K0 = K0,
                                             nepoch = nepoch, sigma = σ, amsgrad = amsgrad, 
                                             gamma = γ, eta0 = η0, 
-                                            decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, debug_with_y0 = debug_with_y0, y0 = Float32.(y0), 
-                                            nepoch0 = nepoch0, N1 = N1, N2 = N2, 
+                                            decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, 
+                                            debug_with_y0 = debug_with_y0, y0 = Float32.(y0), 
+                                            nepoch0 = nepoch0, 
                                             lam_lo = λl, lam_up = λu, 
                                             model_file = model_file,
                                             use_torchsort = use_torchsort, sort_reg_strength=sort_reg_strength, 

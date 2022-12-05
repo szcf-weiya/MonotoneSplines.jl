@@ -164,7 +164,6 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
                     decay_step = 1000, max_norm = 2.0, clip_ratio = 1.0, 
                     debug_with_y0 = False, y0 = 0, 
                     nepoch0 = 100,
-                    subsequent_steps = True, N1 = 100, N2 = 100, 
                     lam_lo = 1e-9, lam_up = 1e-4, use_torchsort = False, 
                     sort_reg_strength = 0.1, gpu_id = 0, 
                     patience = 100, patience0 = 100, disable_early_stopping = True,
@@ -239,7 +238,8 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
     # ##########
     # step 2 
     # ##########
-    model.load_state_dict(torch.load(model_file))
+    if not disable_early_stopping:
+        model.load_state_dict(torch.load(model_file))
     model0 = copy.deepcopy(model)
     early_stopping = EarlyStopping(patience = patience, verbose = False, path = model_file)
     # for epoch in range(nepoch):
