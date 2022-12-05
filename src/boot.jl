@@ -1,8 +1,10 @@
+# rename to GpBS? (c.f. GBS)
 using Flux
 using Plots
 using PyCall
 using Serialization
 using Random
+using BSON
 
 # currentdir = @__DIR__
 # py"""
@@ -34,7 +36,7 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
                         model_file = nothing,
                         niter_per_epoch = 100, cooldown2 = 10,
                         patience = 100, cooldown = 100,
-                        fig = true, figfolder = "~"
+                        fig = true, figfolder = "~", kw...
                         )
     timestamp = replace(strip(read(`date -Iseconds`, String)), ":" => "_")
     nλ = length(λs)
@@ -43,7 +45,7 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
     res_overlap = zeros(nrep, nλ)
     res_err = zeros(nrep, 3)
     Err_boot = zeros(nrep, nλ, 3)
-    if method == "lambda" || method == "lambda_from_file"
+    if method == "lambda" || method == "lambda_from_file" || method == "jl_lambda"
         res_covprob = zeros(nrep, nλ)
         res_err = zeros(nrep, nλ, 3)
     end
@@ -82,7 +84,24 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
                 Ghat = py_train_G(y, B, L, λ, K = K, nepoch = nepoch, η = η, σ = σ0, figname = ifelse(fig, "$figfolder/loss-$f-$i.png", nothing), amsgrad = amsgrad, γ = γ, η0 = η0, decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio,
                 debug_with_y0 = debug_with_y0, y0 = f.(x), nepoch0 = nepoch0, N1 = N1, N2 = N2)
             elseif method == "jl_lambda"
-                Ghat = train_G(x, y, B, L, λ, K = K, σ = σ0, nepoch = nepoch, nB = nB, η = η)
+                model_file = "model-$f-$σ-n$n-J$J-nhidden$nhidden-$i-$seed-$timestamp.bson"
+                λl = λs[1]
+                λu = λs[end]
+                device = ifelse(gpu_id == -1, :cpu, :gpu)
+                Ghat0, loss0 = train_Gλ(y, B, L; λl = λl, λu = λu,
+                                                device = device, model_file = model_file, 
+                                                niter_per_epoch = niter_per_epoch,
+                                                nhidden = nhidden,
+                                                M = K,
+                                                nepoch = nepoch0, kw...)
+                Ghat, loss = train_Gyλ(y, B, L, model_file; device = device, 
+                                                nepoch = nepoch, niter_per_epoch = niter_per_epoch,
+                                                M = K,
+                                                λl = λl, λu = λu)
+                LOSS = vcat(loss0, loss)
+                if fig
+                    savefig(plot(log.(LOSS)), "$figfolder/loss-$f-$σ-$i.png")
+                end
             elseif method == "lambda"
                 M = K
                 Ghat, LOSS = py_train_G_lambda(y,
@@ -116,7 +135,7 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
         # # res[i] = coverage_prob(B * CI, f.(x)) 
         # YCI = hcat([quantile(t, [α/2, 1-α/2]) for t in eachrow(Yhat)]...)'
         # res[i] = coverage_prob(YCI, f.(x)) 
-        if method == "lambda" || method == "lambda_from_file"
+        if method == "lambda" || method == "lambda_from_file" || method == "jl_lambda"
             fitfig = scatter(x, y, legend=:topleft, label="", title="seed = $seed, J = $J")
             idx = sortperm(x)
             fit_err = zeros(nλ, n)
@@ -137,7 +156,8 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
                 end
             end
             savefig(fitfig, "$figfolder/fit-$f-$σ-$i.png")
-            cp, cov_hat, RES_YCI, RES_Yhat = sample_G_λ(Ghat, B, x, y, f, λs, nB = nB)
+            RES_YCI, cov_hat = sample_G_λ(Ghat, y, λs, nB = nB)
+            cp = [coverage_prob(YCI, f.(x)) for YCI in RES_YCI]
             if demo
                 serialize("demo-CI-$f-n$n-σ$σ-seed$seed-B$nB-K0$K0-K$K-nepoch$nepoch-prop$(prop_nknots)-$timestamp.sil", [x, y, λs, J, Yhat, Yhat0, RES_YCI, RES_YCI0, cp]) # loss not exist when from file
             end
@@ -293,12 +313,13 @@ aug(λ::AbstractFloat) = [λ, cbrt(λ), exp(λ), sqrt(λ), log(λ), 10*λ, λ^2,
 
 Train MLP generator G(λ) for λ ∈ [λl, λu].
 """
-function train_G(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMatrix; dim_λ = 8, 
+function train_Gλ(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMatrix; dim_λ = 8, 
                                         activation = gelu,
                                         nhidden = 100,
                                         M = 10,
                                         niter_per_epoch = 100, nepoch = 3,
                                         device = :cpu,
+                                        model_file = "/tmp/model_G.bson",
                                         λl = 1e-4, λu = 1e-3, kw...)
     device = eval(device)
     y = device(rawy)
@@ -314,16 +335,56 @@ function train_G(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMatri
     opt = AMSGrad()
     loss(λ::AbstractFloat) = Flux.Losses.mse(B * G(vcat(y, aug(λ))), y) + λ * sum((L' * G(vcat(y, aug(λ))) ).^2) / n
     losses(λs::Vector) = mean([loss(λ) for λ in λs])
-    train_losses = Float64[]
+    train_loss = Float64[]
     for epoch in 1:nepoch
         for i in 1:niter_per_epoch
             λs = rand(M) * (λu - λl) .+ λl
             Flux.train!(losses, Flux.params(G), [λs], opt)
-            append!(train_losses, losses(λs))
+            append!(train_loss, losses(λs))
         end
     end
-    return (y, λ) -> B * cpu(G)(vcat(y, aug(λ))), train_losses
+    G = cpu(G)
+    BSON.@save model_file G
+    return (y, λ) -> B * G(vcat(y, aug(λ))), train_loss
 end
+
+function train_Gyλ(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMatrix, model_file::String; device = :cpu, 
+                        niter_per_epoch = 100, nepoch = 3, λl = 1e-4, λu = 1e-3,
+                        M = 10)
+    device = eval(device)
+    y = device(rawy)
+    B = device(rawB)
+    L = device(rawL)
+    n, J = size(B)
+    # G0 = BSON.@load model_file G (see issue #3)
+    # G = BSON.@load model_file G
+    G0 = BSON.load(model_file, @__MODULE__)[:G]
+    G = BSON.load(model_file, @__MODULE__)[:G]
+    G0 = device(G0)
+    G = device(G)
+    opt = AMSGrad()
+    train_loss = Float64[]
+    function loss(λ::AbstractFloat)
+        ypred = B * G0(vcat(y, aug(λ)))
+        σ = std(ypred - y)
+        ytrain = [ypred + randn(n) * σ for _ in 1:M]
+        return mean([Flux.Losses.mse(B * G(vcat(ytrain[i], aug(λ))), ytrain[i]) + λ * sum((L' * G(vcat(ytrain[i], aug(λ))) ).^2) / n for i = 1:M])
+    end
+    losses(λs::Vector) = mean([loss(λ) for λ in λs])
+    for epoch in 1:nepoch
+        for i in 1:niter_per_epoch
+            λs = rand(M) * (λu - λl) .+ λl
+            Flux.train!(losses, Flux.params(G), [λs], opt)
+            append!(train_loss, losses(λs))
+        end
+    end
+    G = cpu(G)
+    model_file1 = model_file[1:end-5] * "_ci.bson" # keep G0
+    BSON.@save model_file1 G
+    return (y, λ) -> B * G(vcat(y, aug(λ))), train_loss
+end
+
+
 
 """
     mono_ss_mlp(x::AbstractVector, y::AbstractVector; λl, λu)
@@ -333,13 +394,52 @@ Fit monotone smoothing spline by training a MLP generator.
 function mono_ss_mlp(x::AbstractVector, y::AbstractVector; prop_nknots = 0.2, backend = "flux", λl = 1e-5, λu = 1e-4, device = :cpu, kw...)
     B, Bnew, L, J = build_model(x, true, prop_nknots = prop_nknots)
     if backend == "flux"
-        Ghat, LOSS = train_G(y, B, L; λl = λl, λu = λu, device = device, kw...)
+        Ghat, LOSS = train_Gλ(y, B, L; λl = λl, λu = λu, device = device, kw...)
     else
         Ghat, LOSS = py_train_G_lambda(y, B, L; nepoch = 0, nepoch0 = 3, 
                                                 λl = λl, λu = λu, 
                                                 gpu_id = ifelse(device == :cpu, -1, 0), kw...)
     end
     return Ghat, LOSS
+end
+
+"""
+    ci_mono_ss_mlp(x::AbstractVector{T}, y::AbstractVector{T}, λs::AbstractVector{T}; )
+
+Fit data `x, y` at each `λs` with confidence bands.
+"""
+function ci_mono_ss_mlp(x::AbstractVector{T}, y::AbstractVector{T}, λs::AbstractVector{T}; 
+                                                                        prop_nknots = 0.2,
+                                                                        backend = "flux",
+                                                                        model_file = "/tmp/model_G",
+                                                                        nepoch0 = 3, nepoch = 3,
+                                                                        niter_per_epoch = 100, # can be set via kw...
+                                                                        M = 10,
+                                                                        device = :cpu, kw...) where T <: AbstractFloat
+    B, Bnew, L, J = build_model(x, true, prop_nknots = prop_nknots)
+    model_file *= ifelse(backend == "flux", ".bson", ".pt")
+    λl = minimum(λs)
+    λu = maximum(λs)
+    if backend == "flux"
+        Ghat0, loss0 = train_Gλ(y, B, L; λl = λl, λu = λu,
+                                         device = device, model_file = model_file, 
+                                         niter_per_epoch = niter_per_epoch,
+                                         nepoch = nepoch0, kw...)
+        Ghat, loss = train_Gyλ(y, B, L, model_file; device = device, 
+                                         nepoch = nepoch, niter_per_epoch = niter_per_epoch,
+                                         λl = λl, λu = λu,
+                                         kw...)
+        LOSS = vcat(loss0, loss)                                         
+    else
+        Ghat, LOSS = py_train_G_lambda(y, B, L; nepoch = nepoch, nepoch0 = nepoch0, 
+                                                gpu_id = ifelse(device == :cpu, -1, 0), 
+                                                λl = λl, λu = λu,
+                                                niter_per_epoch = niter_per_epoch,
+                                                K = M, K0 = M, kw...)
+    end
+    Yhat = hcat([Ghat(y, λ) for λ in λs]...)
+    RES_YCI, cov_hat = sample_G_λ(Ghat, y, λs)
+    return Yhat, RES_YCI, LOSS
 end
 
 function train_G(rawx, rawy, rawB, rawL, λ;  nepoch = 100, σ = 0.1, K = 10, 
@@ -583,17 +683,12 @@ function sample_G(G, B::AbstractMatrix{T}, x::AbstractVector{T}, y::AbstractVect
     return cp, yhat
 end
 
-function sample_G_λ(G, B::AbstractMatrix{T}, x::AbstractVector{T}, y::AbstractVector{T}, f::Function, λs::AbstractVector{T}; 
-                        device = cpu, nB = 100, α = 0.05, figname = "cubic.png") where T <: AbstractFloat
-    # if !isnothing(figname)
-    #     fig = scatter(x, y, legend=:topleft, label="")
-    # end
+function sample_G_λ(G::Function, y::AbstractVector{T}, λs::AbstractVector{T}; 
+                        nB = 100, α = 0.05) where T <: AbstractFloat
     n = length(y)
     nλ = length(λs)
-    cp = zeros(nλ)
     cov_hat = zeros(nλ, n)
     RES_YCI = Array{Any, 1}(undef, nλ)
-    RES_Yhat = Array{Any, 1}(undef, nλ)
     for (i, λ) in enumerate(λs)
         yhat = G(y, λ) 
         σhat = std(y - yhat)
@@ -602,24 +697,11 @@ function sample_G_λ(G, B::AbstractMatrix{T}, x::AbstractVector{T}, y::AbstractV
         # idx = sortperm(x)
         YCI = hcat([quantile(t, [α/2, 1-α/2]) for t in eachrow(Yhat)]...)'
         RES_YCI[i] = YCI
-        RES_Yhat[i] = Yhat
-        cp[i] = coverage_prob(YCI, f.(x))
         for j = 1:n
             cov_hat[i, j] = mean((Yhat[j, :] .- mean(Yhat[j, :])) .* (Ystar[j, :] .- mean(Ystar[j, :])) )
         end
-        # if !isnothing(figname)
-        # #    plot(x[idx], Yhat[idx,:], legend = false, title = "B = $nB, Cov = $cp")
-        #     # scatter!(x, y)
-        #     plot!(fig, x[idx], yhat[idx], label = "λ = $λ")
-        #     # plot!(x[idx], YCI[idx,:], lw = 2)
-        #     savefig(figname[1:end-4] * "-$i.png")
-        # end
     end
-    return cp, cov_hat, RES_YCI, RES_Yhat
-    # if !isnothing(figname)
-    #     savefig(figname)
-    # end
-    # return cp, yhat
+    return RES_YCI, cov_hat
 end
 
 
@@ -646,8 +728,8 @@ function py_train_G(y::AbstractVector, B::AbstractMatrix; η = 0.001, K = 10, ne
 end
 
 function py_train_G(y::AbstractVector, B::AbstractMatrix, L::AbstractMatrix, λ::AbstractFloat; 
-                            η = 0.001, η0 = 0.0001, K = 10, nepoch = 100, σ = 1.0, 
-                            amsgrad = false,
+                            η = 0.001, η0 = 0.001, K = 10, nepoch = 100, σ = 1.0, 
+                            amsgrad = true,
                             γ = 0.9,
                             max_norm = 2.0, clip_ratio = 1.0,
                             decay_step = Int(1 / η),
@@ -669,14 +751,14 @@ function py_train_G(y::AbstractVector, B::AbstractMatrix, L::AbstractMatrix, λ:
 end
 
 function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatrix; 
-                            η = 0.001, η0 = 0.0001, K = 10, nepoch = 100, σ = 1.0, 
+                            η = 0.001, η0 = 0.001, K = 10, nepoch = 100, σ = 1.0, 
                             K0 = 10,
                             nhidden = 1000, depth = 2,
-                            amsgrad = false,
+                            amsgrad = true,
                             γ = 0.9,
                             max_norm = 2.0, clip_ratio = 1.0,
                             decay_step = Int(1 / η),
-                            patience = 100, cooldown=100,
+                            patience = 100, patience0 = 100, disable_early_stopping = true,
                             debug_with_y0 = false, y0 = 0, 
                             nepoch0 = 100, N1 = 100, N2 = 100,
                             λl = 1e-9, λu = 1e-4,
@@ -684,8 +766,9 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
                             sort_reg_strength = 0.1,
                             model_file = "model_G.pt",
                             gpu_id = 0,
-                            niter_per_epoch = 100, cooldown2 = 10,
-                            figname = "pyloss.png" # not plot if nothing
+                            niter_per_epoch = 100,
+                            figname = "pyloss.png", # not plot if nothing
+                            kw...
                             )
     # Ghat, LOSS1, LOSS2 = py"train_G"(Float32.(y), Float32.(B), eta = η, K = K, nepoch = nepoch, sigma = σ)
     # Ghat, LOSS = py"train_G"(Float32.(y), Float32.(B), Float32.(L), λ, eta = η, K = K, nepoch = nepoch, sigma = σ)
@@ -698,8 +781,9 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
                                             lam_lo = λl, lam_up = λu, 
                                             model_file = model_file,
                                             use_torchsort = use_torchsort, sort_reg_strength=sort_reg_strength, 
-                                            gpu_id = gpu_id, patience=patience, cooldown=cooldown, 
-                                            niter_per_epoch = niter_per_epoch, cooldown2 = cooldown2,
+                                            gpu_id = gpu_id, 
+                                            patience0 = patience0, patience=patience, disable_early_stopping = disable_early_stopping,
+                                            niter_per_epoch = niter_per_epoch,
                                             nhidden = nhidden, depth = depth)#::Tuple{PyObject, PyArray}
     #println(typeof(py_ret)) #Tuple{PyCall.PyObject, Matrix{Float32}} 
     # ....................... # Tuple{PyCall.PyObject, PyCall.PyArray{Float32, 2}}

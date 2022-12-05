@@ -25,6 +25,8 @@ export check_CI,
         logit,
         mono_ss,
         mono_ss_mlp,
+        ci_mono_ss,
+        ci_mono_ss_mlp,
         gen_data
 
 if Base.VERSION >= v"1.4.2"
