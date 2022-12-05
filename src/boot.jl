@@ -5,6 +5,7 @@ using PyCall
 using Serialization
 using Random
 using BSON
+using ProgressMeter
 
 # currentdir = @__DIR__
 # py"""
@@ -333,11 +334,11 @@ function train_Gλ(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMat
         sort
     ) |> device
     opt = AMSGrad()
-    loss(λ::AbstractFloat) = Flux.Losses.mse(B * G(vcat(y, aug(λ))), y) + λ * sum((L' * G(vcat(y, aug(λ))) ).^2) / n
+    loss(λ::AbstractFloat) = Flux.Losses.mse(B * G(vcat(y, device(aug(λ)) )), y) + λ * sum((L' * G(vcat(y, device(aug(λ)) )) ).^2) / n
     losses(λs::Vector) = mean([loss(λ) for λ in λs])
     train_loss = Float64[]
     for epoch in 1:nepoch
-        for i in 1:niter_per_epoch
+        @showprogress 1 "Train G(λ): " for i in 1:niter_per_epoch
             λs = rand(M) * (λu - λl) .+ λl
             Flux.train!(losses, Flux.params(G), [λs], opt)
             append!(train_loss, losses(λs))
@@ -345,7 +346,7 @@ function train_Gλ(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMat
     end
     G = cpu(G)
     BSON.@save model_file G
-    return (y, λ) -> B * G(vcat(y, aug(λ))), train_loss
+    return (y::AbstractVector{<:AbstractFloat}, λ::AbstractFloat) -> rawB * G(vcat(y, aug(λ))), train_loss
 end
 
 function train_Gyλ(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMatrix, model_file::String; device = :cpu, 
@@ -365,14 +366,14 @@ function train_Gyλ(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMa
     opt = AMSGrad()
     train_loss = Float64[]
     function loss(λ::AbstractFloat)
-        ypred = B * G0(vcat(y, aug(λ)))
+        ypred = B * G0(vcat(y, device(aug(λ))))
         σ = std(ypred - y)
-        ytrain = [ypred + randn(n) * σ for _ in 1:M]
-        return mean([Flux.Losses.mse(B * G(vcat(ytrain[i], aug(λ))), ytrain[i]) + λ * sum((L' * G(vcat(ytrain[i], aug(λ))) ).^2) / n for i = 1:M])
+        ytrain = [ypred + device(randn(n)) * σ for _ in 1:M]
+        return mean([Flux.Losses.mse(B * G(vcat(ytrain[i], device(aug(λ)) )), ytrain[i]) + λ * sum((L' * G(vcat(ytrain[i], device(aug(λ)) )) ).^2) / n for i = 1:M])
     end
     losses(λs::Vector) = mean([loss(λ) for λ in λs])
     for epoch in 1:nepoch
-        for i in 1:niter_per_epoch
+        @showprogress 1 "Train G(y, λ): " for i in 1:niter_per_epoch
             λs = rand(M) * (λu - λl) .+ λl
             Flux.train!(losses, Flux.params(G), [λs], opt)
             append!(train_loss, losses(λs))
@@ -381,7 +382,7 @@ function train_Gyλ(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMa
     G = cpu(G)
     model_file1 = model_file[1:end-5] * "_ci.bson" # keep G0
     BSON.@save model_file1 G
-    return (y, λ) -> B * G(vcat(y, aug(λ))), train_loss
+    return (y::AbstractVector{<:AbstractFloat}, λ::AbstractFloat) -> rawB * G(vcat(y, aug(λ))), train_loss
 end
 
 

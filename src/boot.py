@@ -168,6 +168,7 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
                     sort_reg_strength = 0.1, gpu_id = 0, 
                     patience = 100, patience0 = 100, disable_early_stopping = True,
                     depth = 2, 
+                    eval_sigma_adaptive = False, # if False, use `model0` to evaluate sigma
                     model_file = "model_G.pt", 
                     niter_per_epoch = 100):
     #
@@ -251,7 +252,10 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
                 lam = np.random.rand() * (lam_up - lam_lo) + lam_lo
                 aug_lam = torch.tensor(aug(lam), dtype=torch.float32).to(device)
                 ylam = torch.cat((y, aug_lam.repeat((1, 1))), dim=1)
-                beta = model(ylam) # do not influence by step 2
+                if eval_sigma_adaptive:
+                    beta = model(ylam) 
+                else:
+                    beta = model0(ylam) # do not influence by step 2
                 ypred = torch.matmul(beta, B.t())
                 sigma = torch.std(ypred.detach() - y, unbiased = True)
                 epsilons = torch.randn((K, n)).to(device) * sigma
