@@ -161,7 +161,8 @@ def train_G(y, B, L, lam, K = 10, nepoch = 100, nhidden = 1000, eta = 0.001, eta
 def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100, 
                     nhidden = 1000, eta = 0.001, eta0 = 0.0001, 
                     gamma = 0.9, sigma = 1, amsgrad = False, 
-                    decay_step = 1000, max_norm = 2.0, clip_ratio = 1.0, 
+                    decay_step = 5, 
+                    max_norm = 2.0, clip_ratio = 1.0, 
                     debug_with_y0 = False, y0 = 0, 
                     nepoch0 = 100,
                     lam_lo = 1e-9, lam_up = 1e-4, use_torchsort = False, 
@@ -186,7 +187,7 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
     #sch1 = torch.optim.lr_scheduler.StepLR(opt1, gamma = gamma, step_size = decay_step)
     # sch1 = torch.optim.lr_scheduler.ReduceLROnPlateau(opt1, 'min', factor = gamma, patience = patience, cooldown = cooldown, min_lr = 1e-7, threshold = 1e-5)
     # sch1 = torch.optim.lr_scheduler.CyclicLR(opt1, 1e-6, eta0, cycle_momentum=False, mode = "exp_range", gamma = gamma)
-    # sch2 = torch.optim.lr_scheduler.StepLR(opt2, gamma = gamma, step_size = decay_step)
+    sch2 = torch.optim.lr_scheduler.StepLR(opt2, gamma = gamma, step_size = decay_step)
     loss_fn = nn.functional.mse_loss
     # just realized that pytorch also did not do sort in batch
     LOSS = torch.zeros(nepoch, 4).to(device)
@@ -287,7 +288,8 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
             ypred = torch.matmul(beta, B.t())
             LOSS[epoch, i+1] = loss_fn(ypred, y) + lam * torch.square(torch.matmul(beta, L)).mean() * J / n
 
-        print(f"epoch = {epoch}, L(lam) = {LOSS[epoch, 0]:.6f}, L(lam_lo) = {LOSS[epoch, 1]:.6f}, L(lam_up) = {LOSS[epoch, 2]:.6f}")
+        sch2.step()
+        print(f"epoch = {epoch}, L(lam) = {LOSS[epoch, 0]:.6f}, L(lam_lo) = {LOSS[epoch, 1]:.6f}, L(lam_up) = {LOSS[epoch, 2]:.6f}, lr = {sch2.get_last_lr()}")
         if not disable_early_stopping:
             early_stopping(LOSS[epoch, 1:].mean(), model)
             if early_stopping.early_stop:

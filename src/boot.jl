@@ -28,7 +28,7 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
                         demo = false,
                         max_norm = 2000.0, clip_ratio = 1000.0,
                         debug_with_y0 = false,
-                        decay_step = round(Int, 1 / η),
+                        decay_step = 5,
                         nepoch0 = 100, N1 = 100, N2 = 100,
                         seed = 1234,
                         prop_nknots = 1.0,
@@ -37,6 +37,7 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
                         model_file = nothing,
                         niter_per_epoch = 100, cooldown2 = 10,
                         patience = 100, cooldown = 100,
+                        sort_in_nn = true, # only flux
                         fig = true, figfolder = "~", kw...
                         )
     timestamp = replace(strip(read(`date -Iseconds`, String)), ":" => "_")
@@ -93,11 +94,13 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
                                                 device = device, model_file = model_file, 
                                                 niter_per_epoch = niter_per_epoch,
                                                 nhidden = nhidden,
+                                                sort_in_nn = sort_in_nn,
                                                 M = K,
                                                 nepoch = nepoch0, kw...)
                 Ghat, loss = train_Gyλ(y, B, L, model_file; device = device, 
                                                 nepoch = nepoch, niter_per_epoch = niter_per_epoch,
                                                 M = K,
+                                                sort_in_nn = sort_in_nn,
                                                 λl = λl, λu = λu)
                 LOSS = vcat(loss0, loss)
                 if fig
@@ -321,36 +324,53 @@ function train_Gλ(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMat
                                         niter_per_epoch = 100, nepoch = 3,
                                         device = :cpu,
                                         model_file = "/tmp/model_G.bson",
+                                        sort_in_nn = true,
                                         λl = 1e-4, λu = 1e-3, kw...)
     device = eval(device)
     y = device(rawy)
     B = device(rawB)
     L = device(rawL)
     n, J = size(B)
-    G = Chain(Dense(n + dim_λ => nhidden, activation), 
-        Dense(nhidden => nhidden, activation),
-        Dense(nhidden => nhidden, activation), 
-        Dense(nhidden => J),
-        sort
-    ) |> device
+    if sort_in_nn
+        G = Chain(Dense(n + dim_λ => nhidden, activation), 
+            Dense(nhidden => nhidden, activation),
+            Dense(nhidden => nhidden, activation), 
+            Dense(nhidden => J),
+            sort
+        ) |> device
+    else
+        G = Chain(Dense(n + dim_λ => nhidden, activation), 
+            Dense(nhidden => nhidden, activation),
+            Dense(nhidden => nhidden, activation), 
+            Dense(nhidden => J)
+        ) |> device
+    end
     opt = AMSGrad()
-    loss(λ::AbstractFloat) = Flux.Losses.mse(B * G(vcat(y, device(aug(λ)) )), y) + λ * sum((L' * G(vcat(y, device(aug(λ)) )) ).^2) / n
+    #loss(λ::AbstractFloat) = Flux.Losses.mse(B * G(vcat(y, device(aug(λ)) )), y) + λ * sum((L' * G(vcat(y, device(aug(λ)) )) ).^2) / n
+    yaug(λ::AbstractFloat) = device(vcat(rawy, aug(λ)))
+    loss(λ::AbstractFloat) = ifelse(sort_in_nn, Flux.Losses.mse(B * G(yaug(λ)) , y) + λ * sum((L' * G(yaug(λ)) ).^2) / n,
+                            Flux.Losses.mse(rawB * sort(cpu(G(yaug(λ)))) , rawy) + λ * sum((rawL' * sort(cpu(G(yaug(λ)))) ).^2) / n)
     losses(λs::Vector) = mean([loss(λ) for λ in λs])
     train_loss = Float64[]
     for epoch in 1:nepoch
         @showprogress 1 "Train G(λ): " for i in 1:niter_per_epoch
             λs = rand(M) * (λu - λl) .+ λl
-            Flux.train!(losses, Flux.params(G), [λs], opt)
+            Flux.train!(losses, Flux.params(G), [(λs,)], opt)
             append!(train_loss, losses(λs))
         end
     end
     G = cpu(G)
     BSON.@save model_file G
-    return (y::AbstractVector{<:AbstractFloat}, λ::AbstractFloat) -> rawB * G(vcat(y, aug(λ))), train_loss
+    if sort_in_nn
+        return (y::AbstractVector{<:AbstractFloat}, λ::AbstractFloat) -> rawB * G(vcat(y, aug(λ))), train_loss
+    else
+        return (y::AbstractVector{<:AbstractFloat}, λ::AbstractFloat) -> rawB * sort(G(vcat(y, aug(λ)))), train_loss
+    end
 end
 
 function train_Gyλ(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMatrix, model_file::String; device = :cpu, 
                         niter_per_epoch = 100, nepoch = 3, λl = 1e-4, λu = 1e-3,
+                        sort_in_nn = true,
                         M = 10)
     device = eval(device)
     y = device(rawy)
@@ -361,15 +381,22 @@ function train_Gyλ(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMa
     # G = BSON.@load model_file G
     G0 = BSON.load(model_file, @__MODULE__)[:G]
     G = BSON.load(model_file, @__MODULE__)[:G]
-    G0 = device(G0)
     G = device(G)
     opt = AMSGrad()
     train_loss = Float64[]
     function loss(λ::AbstractFloat)
-        ypred = B * G0(vcat(y, device(aug(λ))))
-        σ = std(ypred - y)
-        ytrain = [ypred + device(randn(n)) * σ for _ in 1:M]
-        return mean([Flux.Losses.mse(B * G(vcat(ytrain[i], device(aug(λ)) )), ytrain[i]) + λ * sum((L' * G(vcat(ytrain[i], device(aug(λ)) )) ).^2) / n for i = 1:M])
+        if sort_in_nn
+            ypred = rawB * G0(vcat(rawy, aug(λ))) # G0 on cpu
+        else
+            ypred = rawB * sort(G0(vcat(rawy, aug(λ))))
+        end
+        σ = std(ypred - rawy)
+        ytrain = [ypred + randn(n) * σ for _ in 1:M]
+        if sort_in_nn
+            return mean([Flux.Losses.mse(B * G(device(vcat(ytrain[i], aug(λ)) )), ytrain[i]) + λ * sum((L' * G(device(vcat(ytrain[i], aug(λ)) )) ).^2) / n for i = 1:M])
+        else
+            return mean([Flux.Losses.mse(rawB * sort(cpu(G(device(vcat(ytrain[i], aug(λ)))))), ytrain[i]) + λ * sum((rawL' * sort(cpu(G(device(vcat(ytrain[i], aug(λ)))))) ).^2) / n for i = 1:M])
+        end
     end
     losses(λs::Vector) = mean([loss(λ) for λ in λs])
     for epoch in 1:nepoch
@@ -382,7 +409,11 @@ function train_Gyλ(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMa
     G = cpu(G)
     model_file1 = model_file[1:end-5] * "_ci.bson" # keep G0
     BSON.@save model_file1 G
-    return (y::AbstractVector{<:AbstractFloat}, λ::AbstractFloat) -> rawB * G(vcat(y, aug(λ))), train_loss
+    if sort_in_nn
+        return (y::AbstractVector{<:AbstractFloat}, λ::AbstractFloat) -> rawB * G(vcat(y, aug(λ))), train_loss
+    else
+        return (y::AbstractVector{<:AbstractFloat}, λ::AbstractFloat) -> rawB * sort(G(vcat(y, aug(λ)))), train_loss
+    end
 end
 
 
@@ -431,6 +462,7 @@ function ci_mono_ss_mlp(x::AbstractVector{T}, y::AbstractVector{T}, λs::Abstrac
         Ghat, loss = train_Gyλ(y, B, L, model_file; device = device, 
                                          nepoch = nepoch, niter_per_epoch = niter_per_epoch,
                                          λl = λl, λu = λu,
+                                         M = M,
                                          kw...)
         LOSS = vcat(loss0, loss)                                         
     else
@@ -442,8 +474,13 @@ function ci_mono_ss_mlp(x::AbstractVector{T}, y::AbstractVector{T}, λs::Abstrac
                                                 K = M, K0 = M, kw...)
     end
     Yhat = hcat([Ghat(y, λ) for λ in λs]...)
+    if backend == "flux"
+        Yhat0 = hcat([Ghat0(y, λ) for λ in λs]...)
+    else
+        Yhat0 = Yhat
+    end
     RES_YCI, cov_hat = sample_G_λ(Ghat, y, λs)
-    return Yhat, RES_YCI, LOSS
+    return Yhat, RES_YCI, LOSS, Yhat0
 end
 
 function train_G(rawx, rawy, rawB, rawL, λ;  nepoch = 100, σ = 0.1, K = 10, 
@@ -761,7 +798,7 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
                             amsgrad = true,
                             γ = 0.9,
                             max_norm = 2.0, clip_ratio = 1.0,
-                            decay_step = Int(1 / η),
+                            decay_step = 5,
                             patience = 100, patience0 = 100, disable_early_stopping = true,
                             debug_with_y0 = false, y0 = 0, 
                             nepoch0 = 100,
