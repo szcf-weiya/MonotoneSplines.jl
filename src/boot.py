@@ -253,7 +253,7 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
                 # construct tensor
                 lam = torch.rand((K0, 1, 1)) * (lam_up - lam_lo) + lam_lo
                 aug_lam = torch.cat(aug(lam), dim=2) # K0 x 1 x 8
-                ylam = torch.cat((y.repeat(K0, 1, 1), aug_lam), dim=2) # K0 x 1 x (n+8)
+                ylam = torch.cat((y.repeat(K0, 1, 1), aug_lam), dim=2).to(device) # K0 x 1 x (n+8)
                 # K0 x 1 x J
                 if eval_sigma_adaptive:
                     beta = model(ylam).detach()
