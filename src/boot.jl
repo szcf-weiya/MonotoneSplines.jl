@@ -5,6 +5,7 @@ using PyCall
 using Serialization
 using Random
 using BSON
+using Zygote
 using ProgressMeter
 
 # currentdir = @__DIR__
@@ -35,6 +36,7 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
                         nhidden = 1000, depth = 2,
                         gpu_id = 3,
                         model_file = nothing,
+                        step2_use_tensor = false,
                         niter_per_epoch = 100, cooldown2 = 10,
                         patience = 100, cooldown = 100,
                         sort_in_nn = true, # only flux
@@ -116,6 +118,7 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
                                                 use_torchsort = false,
                                                 gpu_id = gpu_id,
                                                 nhidden = nhidden, depth = depth,
+                                                step2_use_tensor = step2_use_tensor,
                                                 niter_per_epoch = niter_per_epoch, cooldown2 = cooldown2,
                                                 model_file = "model-$f-$σ-n$n-J$J-nhidden$nhidden-$i-$seed-$timestamp.pt",
                                                 patience = patience, cooldown = cooldown,
@@ -312,6 +315,18 @@ Augment `λ` with 8 different functions.
 """
 aug(λ::AbstractFloat) = [λ, cbrt(λ), exp(λ), sqrt(λ), log(λ), 10*λ, λ^2, λ^3]
 
+batch_sort(x::Matrix) = reduce(hcat, [sort(xi) for xi in eachcol(x)])
+
+Zygote.@adjoint function batch_sort(x::Matrix)
+    ps = []
+    for xi in eachcol(x)
+        p = sortperm(xi)
+        push!(ps, p)
+    end
+    return reduce(hcat, [x[ps[i], i] for i in eachindex(ps)]), 
+           x̄ -> (reduce(hcat, [x̄[invperm(ps[i]),i] for i in eachindex(ps)]),)
+end
+
 """
     train_G(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMatrix; λl, λu)
 
@@ -324,13 +339,15 @@ function train_Gλ(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMat
                                         niter_per_epoch = 100, nepoch = 3,
                                         device = :cpu,
                                         model_file = "/tmp/model_G.bson",
-                                        sort_in_nn = true,
+                                        sort_in_nn = false,
+                                        eval_in_batch = true,
                                         λl = 1e-4, λu = 1e-3, kw...)
     device = eval(device)
     y = device(rawy)
     B = device(rawB)
     L = device(rawL)
     n, J = size(B)
+    eval_in_batch = !sort_in_nn & eval_in_batch
     if sort_in_nn
         G = Chain(Dense(n + dim_λ => nhidden, activation), 
             Dense(nhidden => nhidden, activation),
@@ -351,12 +368,25 @@ function train_Gλ(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMat
     loss(λ::AbstractFloat) = ifelse(sort_in_nn, Flux.Losses.mse(B * G(yaug(λ)) , y) + λ * sum((L' * G(yaug(λ)) ).^2) / n,
                             Flux.Losses.mse(rawB * sort(cpu(G(yaug(λ)))) , rawy) + λ * sum((rawL' * sort(cpu(G(yaug(λ)))) ).^2) / n)
     losses(λs::Vector) = mean([loss(λ) for λ in λs])
+    # only support sort_in_nn = false (see #103)
+    function loss_batch(λs::Vector)
+        ys = repeat(rawy, 1, M)
+        ys_aug = vcat(ys, reduce(hcat, aug.(λs))) # (n+8)*M
+        Γ = batch_sort(cpu(G(device(ys_aug))))
+        #                                               JxJ   JxM   Mx1
+        return Flux.Losses.mse(rawB * Γ, ys) + sum((rawL' * Γ * sqrt.(λs)).^2) / n / M
+    end
     train_loss = Float64[]
     for epoch in 1:nepoch
         @showprogress 1 "Train G(λ): " for i in 1:niter_per_epoch
             λs = rand(M) * (λu - λl) .+ λl
-            Flux.train!(losses, Flux.params(G), [(λs,)], opt)
-            append!(train_loss, losses(λs))
+            if eval_in_batch
+                Flux.train!(loss_batch, Flux.params(G), [(λs,)], opt)
+                append!(train_loss, loss_batch(λs))
+            else                    
+                Flux.train!(losses, Flux.params(G), [(λs,)], opt)
+                append!(train_loss, losses(λs))
+            end
         end
     end
     G = cpu(G)
@@ -364,6 +394,7 @@ function train_Gλ(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMat
     if sort_in_nn
         return (y::AbstractVector{<:AbstractFloat}, λ::AbstractFloat) -> rawB * G(vcat(y, aug(λ))), train_loss
     else
+        # no need batch_sort here
         return (y::AbstractVector{<:AbstractFloat}, λ::AbstractFloat) -> rawB * sort(G(vcat(y, aug(λ)))), train_loss
     end
 end
@@ -448,6 +479,7 @@ function ci_mono_ss_mlp(x::AbstractVector{T}, y::AbstractVector{T}, λs::Abstrac
                                                                         niter_per_epoch = 100, # can be set via kw...
                                                                         M = 10,
                                                                         nhidden = 100,
+                                                                        step2_use_tensor = false,
                                                                         device = :cpu, kw...) where T <: AbstractFloat
     B, Bnew, L, J = build_model(x, true, prop_nknots = prop_nknots)
     model_file *= ifelse(backend == "flux", ".bson", ".pt")
@@ -470,6 +502,7 @@ function ci_mono_ss_mlp(x::AbstractVector{T}, y::AbstractVector{T}, λs::Abstrac
                                                 gpu_id = ifelse(device == :cpu, -1, 0), 
                                                 λl = λl, λu = λu,
                                                 nhidden = nhidden,
+                                                step2_use_tensor = step2_use_tensor,
                                                 niter_per_epoch = niter_per_epoch,
                                                 K = M, K0 = M, kw...)
     end
@@ -808,6 +841,7 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
                             model_file = "model_G.pt",
                             gpu_id = 0,
                             niter_per_epoch = 100,
+                            step2_use_tensor = false,
                             figname = "pyloss.png", # not plot if nothing
                             kw...
                             )
@@ -826,6 +860,7 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
                                             gpu_id = gpu_id, 
                                             patience0 = patience0, patience=patience, disable_early_stopping = disable_early_stopping,
                                             niter_per_epoch = niter_per_epoch,
+                                            step2_use_tensor = step2_use_tensor,
                                             nhidden = nhidden, depth = depth)#::Tuple{PyObject, PyArray}
     #println(typeof(py_ret)) #Tuple{PyCall.PyObject, Matrix{Float32}} 
     # ....................... # Tuple{PyCall.PyObject, PyCall.PyArray{Float32, 2}}

@@ -171,6 +171,7 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
                     depth = 2, 
                     eval_sigma_adaptive = False, # if False, use `model0` to evaluate sigma
                     model_file = "model_G.pt", 
+                    step2_use_tensor = False,
                     niter_per_epoch = 100):
     #
     device = f"cuda:{gpu_id}" if torch.cuda.is_available() and gpu_id != -1 else "cpu"
@@ -248,28 +249,51 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
     for epoch in range(nepoch):
         pbar = tqdm.trange(niter_per_epoch, desc="Training G(y, lambda)")
         for ii in pbar:
-            loss2 = 0
-            for i in range(K0): # for each lam
-                lam = np.random.rand() * (lam_up - lam_lo) + lam_lo
-                aug_lam = torch.tensor(aug(lam), dtype=torch.float32).to(device)
-                ylam = torch.cat((y, aug_lam.repeat((1, 1))), dim=1)
+            if step2_use_tensor:
+                # construct tensor
+                lam = torch.rand((K0, 1, 1)) * (lam_up - lam_lo) + lam_lo
+                aug_lam = torch.cat(aug(lam), dim=2) # K0 x 1 x 8
+                ylam = torch.cat((y.repeat(K0, 1, 1), aug_lam), dim=2) # K0 x 1 x (n+8)
+                # K0 x 1 x J
                 if eval_sigma_adaptive:
-                    beta = model(ylam) 
+                    beta = model(ylam).detach()
                 else:
-                    beta = model0(ylam) # do not influence by step 2
+                    beta = model0(ylam).detach()
+                # K0 x 1 x n
                 ypred = torch.matmul(beta, B.t())
-                sigma = torch.std(ypred.detach() - y, unbiased = True)
-                epsilons = torch.randn((K, n)).to(device) * sigma
+                sigma = torch.std(ypred - y, unbiased = True, dim = 2, keepdim = True) # K0 x 1 x 1 (keepdim), otherwise K0 x 1
+                epsilons = torch.randn((K0, K, n)).to(device) * sigma
 
-                #        1xn      +      Kxn
-                ytrain = ypred.detach() + epsilons 
-                yslam = torch.cat((ytrain, aug_lam.repeat((K, 1)) ), dim=1)
-                betas = model(yslam) # K x J
-                yspred = torch.matmul(betas, B.t()) # KxJ x Jxn
-                # ...............................................................KxJ x JxJ
-                loss2 = loss2 + loss_fn(yspred, ytrain) + lam * torch.square(torch.matmul(betas, L)).mean() * J / n
-            #
-            loss2 = loss2 / K0
+                # construct training dataset
+                ytrain = ypred + epsilons # K0 x K x n
+                yslam = torch.cat((ytrain, aug_lam.repeat((1, K, 1))), dim=2) # K0 x K x (n+8)
+                betas = model(yslam) # K0 x K x J
+                yspred = torch.matmul(betas, B.t()) # K0 x K x n
+                #                               K0x1x1                           K0xKxJ JxJ
+                loss2 = loss_fn(yspred, ytrain) + torch.mean(lam * torch.square(torch.matmul(betas, L))) * J / n
+            else:
+                loss2 = 0
+                for i in range(K0): # for each lam
+                    lam = np.random.rand() * (lam_up - lam_lo) + lam_lo
+                    aug_lam = torch.tensor(aug(lam), dtype=torch.float32).to(device)
+                    ylam = torch.cat((y, aug_lam.repeat((1, 1))), dim=1)
+                    if eval_sigma_adaptive:
+                        beta = model(ylam) 
+                    else:
+                        beta = model0(ylam) # do not influence by step 2
+                    ypred = torch.matmul(beta, B.t())
+                    sigma = torch.std(ypred.detach() - y, unbiased = True)
+                    epsilons = torch.randn((K, n)).to(device) * sigma
+
+                    #        1xn      +      Kxn
+                    ytrain = ypred.detach() + epsilons 
+                    yslam = torch.cat((ytrain, aug_lam.repeat((K, 1)) ), dim=1)
+                    betas = model(yslam) # K x J
+                    yspred = torch.matmul(betas, B.t()) # KxJ x Jxn
+                    # ...............................................................KxJ x JxJ
+                    loss2 = loss2 + loss_fn(yspred, ytrain) + lam * torch.square(torch.matmul(betas, L)).mean() * J / n
+                #
+                loss2 = loss2 / K0
             opt2.zero_grad()
             loss2.backward()
             # nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_norm * clip_ratio)
