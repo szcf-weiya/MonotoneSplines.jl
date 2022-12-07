@@ -270,7 +270,7 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
                 betas = model(yslam) # K0 x K x J
                 yspred = torch.matmul(betas, B.t()) # K0 x K x n
                 #                               K0x1x1                           K0xKxJ JxJ
-                loss2 = loss_fn(yspred, ytrain) + torch.mean(lam * torch.square(torch.matmul(betas, L))) * J / n
+                loss2 = loss_fn(yspred, ytrain) + torch.mean(lam.to(device) * torch.square(torch.matmul(betas, L))) * J / n
             else:
                 loss2 = 0
                 for i in range(K0): # for each lam
