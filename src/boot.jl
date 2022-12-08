@@ -18,6 +18,8 @@ using ProgressMeter
 ## determine functions formally (NB: Be better not to change the name)
 cubic(x) = x^3
 logit(x) = 1/(1+exp(-x))
+logit5(x) = 1/(1+exp(-5x))
+sinhalfpi(x) = sin(pi/2 * x)
 
 function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200, 
                         K = 10, nrep = 100, α = 0.05, C = 1, η = 0.001, method = "pytorch",
@@ -40,19 +42,21 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
                         niter_per_epoch = 100, cooldown2 = 10,
                         patience = 100, cooldown = 100,
                         sort_in_nn = true, # only flux
+                        check_acc = false, # reduce to check_acc
                         fig = true, figfolder = "~", kw...
                         )
     timestamp = replace(strip(read(`date -Iseconds`, String)), ":" => "_")
-    nλ = length(λs)
-    res_time = zeros(nrep)
-    res_covprob = zeros(nrep) #
-    res_overlap = zeros(nrep, nλ)
-    res_err = zeros(nrep, 3)
-    Err_boot = zeros(nrep, nλ, 3)
-    if method == "lambda" || method == "lambda_from_file" || method == "jl_lambda"
-        res_covprob = zeros(nrep, nλ)
-        res_err = zeros(nrep, nλ, 3)
+    if check_acc
+        nepoch = 0
     end
+    nλ = length(λs)
+    res_time = zeros(nrep, 4) # OPT fit (discrete lambda, 20 lambda) & MLP generator (continue lambda, infty) 
+                             # OPT ci (single lambda) & MLP generator (continue lambda)
+    res_err = zeros(nrep, 3) 
+    Err_boot = zeros(nrep, nλ, 3)
+    res_covprob = zeros(nrep, nλ, 2) # OPT and MLP
+    res_overlap = zeros(nrep, nλ)
+    res_err = zeros(nrep, nλ, 3)
     Yhat0 = zeros(nλ, n)
     Yhat = zeros(nλ, n)
     ## julia's progress bar has been overrideen by tqdm's progress bar
@@ -76,17 +80,17 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
         else
             βhat0, yhat0 = mono_ss(x, y, λ, prop_nknots = prop_nknots);
         end
-        for (j, λ) in enumerate(λs)
+        res_time[i, 1] = @elapsed for (j, λ) in enumerate(λs)
             βhat0, yhat0 = mono_ss(x, y, λ, prop_nknots = prop_nknots)
             Yhat0[j, :] = yhat0
         end
         # err0 = Flux.Losses.mse(yhat, y)
         σ0 = lm(x, y)
-        res_time[i] = @elapsed begin
+        res_time[i, 2] = @elapsed begin
             if method == "pytorch"
                 #Ghat = py_train_G(y, B, K = K, nepoch = nepoch, η = η, σ = σ0)
-                Ghat = py_train_G(y, B, L, λ, K = K, nepoch = nepoch, η = η, σ = σ0, figname = ifelse(fig, "$figfolder/loss-$f-$i.png", nothing), amsgrad = amsgrad, γ = γ, η0 = η0, decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio,
-                debug_with_y0 = debug_with_y0, y0 = f.(x), nepoch0 = nepoch0, N1 = N1, N2 = N2)
+                println("deprecated")
+                # Ghat = py_train_G(y, B, L, λ, K = K, nepoch = nepoch, η = η, σ = σ0, figname = ifelse(fig, "$figfolder/loss-$f-$i.png", nothing), amsgrad = amsgrad, γ = γ, η0 = η0, decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio,debug_with_y0 = debug_with_y0, y0 = f.(x), nepoch0 = nepoch0, N1 = N1, N2 = N2)
             elseif method == "jl_lambda"
                 model_file = "model-$f-$σ-n$n-J$J-nhidden$nhidden-$i-$seed-$timestamp.bson"
                 λl = λs[1]
@@ -126,7 +130,7 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
                                                 nepoch0 = nepoch0, λl = λs[1], λu = λs[end])
             elseif method == "lambda_from_file"
                 # gpu is much faster
-                Ghat = load_model(n, J, nhidden, model_file, gpu_id = gpu_id)
+                Ghat = load_model(B, model_file, gpu_id = gpu_id)
             else
                 Ghat = train_G2(x, y, B; K = K, σ = σ0, nepoch = nepoch, nB = nB, C = C, patience = patience, η = η) 
             end
@@ -142,55 +146,53 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
         # # res[i] = coverage_prob(B * CI, f.(x)) 
         # YCI = hcat([quantile(t, [α/2, 1-α/2]) for t in eachrow(Yhat)]...)'
         # res[i] = coverage_prob(YCI, f.(x)) 
-        if method == "lambda" || method == "lambda_from_file" || method == "jl_lambda"
-            fitfig = scatter(x, y, legend=:topleft, label="", title="seed = $seed, J = $J")
-            idx = sortperm(x)
-            fit_err = zeros(nλ, n)
-            RES_YCI0 = Array{Any, 1}(undef, nλ)
-            for (j, λ) in enumerate(λs)
-                _, YCI = MonotoneSplines.ci_mono_ss(x, y, λ, prop_nknots=prop_nknots)
-                RES_YCI0[j] = YCI
-                yhat = Ghat(y, λ)
-                Yhat[j, :] .= yhat
-                rel_gap = Flux.Losses.mse(Yhat0[j, :], yhat) / Flux.Losses.mse(Yhat0[j, :], zeros(n))
-                fit_ratio = Flux.Losses.mse(yhat, y) / Flux.Losses.mse(Yhat0[j, :], y)
-                fit_ratio2 = Flux.Losses.mse(yhat, f.(x)) / Flux.Losses.mse(Yhat0[j, :], f.(x))
-                res_err[i, j, :] .= [rel_gap, fit_ratio, fit_ratio2]
-                fit_err[j, :] .= (yhat - y).^2
-                if fig
-                    plot!(fitfig, x[idx], yhat[idx], label = "λ = $λ")
-                    plot!(fitfig, x[idx], Yhat0[j, idx], label = "", ls = :dash)
-                end
+        fitfig = scatter(x, y, legend=:topleft, label="", title="seed = $seed, J = $J")
+        idx = sortperm(x)
+        fit_err = zeros(nλ, n)
+        RES_YCI0 = Array{Any, 1}(undef, nλ)
+        for (j, λ) in enumerate(λs)
+            res_time[i, 3] += @elapsed begin
+                _, YCI = MonotoneSplines.ci_mono_ss(x, y, λ, prop_nknots=prop_nknots, B = nB)
             end
-            savefig(fitfig, "$figfolder/fit-$f-$σ-$i.png")
-            RES_YCI, cov_hat = sample_G_λ(Ghat, y, λs, nB = nB)
-            cp = [coverage_prob(YCI, f.(x)) for YCI in RES_YCI]
-            if demo
-                serialize("demo-CI-$f-n$n-σ$σ-seed$seed-B$nB-K0$K0-K$K-nepoch$nepoch-prop$(prop_nknots)-$timestamp.sil", [x, y, λs, J, Yhat, Yhat0, RES_YCI, RES_YCI0, cp]) # loss not exist when from file
+            RES_YCI0[j] = YCI
+            yhat = Ghat(y, λ)
+            Yhat[j, :] .= yhat
+            rel_gap = Flux.Losses.mse(Yhat0[j, :], yhat) / Flux.Losses.mse(Yhat0[j, :], zeros(n))
+            fit_ratio = Flux.Losses.mse(yhat, y) / Flux.Losses.mse(Yhat0[j, :], y)
+            fit_ratio2 = Flux.Losses.mse(yhat, f.(x)) / Flux.Losses.mse(Yhat0[j, :], f.(x))
+            res_err[i, j, :] .= [rel_gap, fit_ratio, fit_ratio2]
+            fit_err[j, :] .= (yhat - y).^2
+            if fig
+                plot!(fitfig, x[idx], yhat[idx], label = "λ = $λ")
+                plot!(fitfig, x[idx], Yhat0[j, idx], label = "", ls = :dash)
             end
-            for j = 1:nλ
-                res_overlap[i, j] = jaccard_index(RES_YCI[j], RES_YCI0[j])
-            end
-            res_covprob[i, :] .= cp
-            Err_boot[i, :, 1] .= mean(fit_err, dims=2)[:]
-            Err_boot[i, :, 2] .= mean(cov_hat, dims=2)[:]
-            Err_boot[i, :, 3] .= Err_boot[i, :, 1] + 2 * Err_boot[i, :, 2]
-            errfig = plot(log.(λs), Err_boot[i, :, 3], label = "err + 2cov")
-            plot!(log.(λs), Err_boot[i, :, 1], label = "err")
-            errs, _, _, _ = cv_mono_ss(x, y, λs, nfold = 10)
-            plot!(errfig, log.(λs), errs, label = "10 fold CV")
-            errs2, _, _, _ = cv_mono_ss(x, y, λs, nfold = n)
-            plot!(errfig, log.(λs), errs2, label = "LOOCV")
-            savefig(errfig, "$figfolder/err-$f-$σ-$i.png")
-            savefig(plot(log.(λs), cp), "$figfolder/cp-$f-$σ-$i.png")
-            # sample_G_λ(Ghat, B, x, y, f, λs/n, nB = nB, figname = ifelse(fig, "$figfolder/fit-$f-$σ-$i.png", nothing))            
-        else
-            res_covprob[i], yhat = sample_G(Ghat, B, x, y, f, nB = nB, figname = ifelse(fig, "$figfolder/fit-$f-$i.png", nothing))
-            res_err[i, :] = [Flux.Losses.mse(yhat0, yhat),
-                            Flux.Losses.mse(yhat0, f.(x)),
-                            Flux.Losses.mse(yhat, f.(x))
-                            ]    
         end
+        savefig(fitfig, "$figfolder/fit-$f-$σ-$i.png")
+        res_time[i, 4] = @elapsed begin
+            RES_YCI, cov_hat = sample_G_λ(Ghat, y, λs, nB = nB)               
+        end
+        cp = [coverage_prob(YCI, f.(x)) for YCI in RES_YCI]
+        cp0 = [coverage_prob(YCI, f.(x)) for YCI in RES_YCI0]
+        if demo
+            serialize("demo-CI-$f-n$n-σ$σ-seed$seed-B$nB-K0$K0-K$K-nepoch$nepoch-prop$(prop_nknots)-$timestamp.sil", [x, y, λs, J, Yhat, Yhat0, RES_YCI, RES_YCI0, cp, cp0]) # loss not exist when from file
+        end
+        for j = 1:nλ
+            res_overlap[i, j] = jaccard_index(RES_YCI[j], RES_YCI0[j])
+        end
+        res_covprob[i, :, 1] .= cp
+        res_covprob[i, :, 2] .= cp0
+        Err_boot[i, :, 1] .= mean(fit_err, dims=2)[:]
+        Err_boot[i, :, 2] .= mean(cov_hat, dims=2)[:]
+        Err_boot[i, :, 3] .= Err_boot[i, :, 1] + 2 * Err_boot[i, :, 2]
+        errfig = plot(log.(λs), Err_boot[i, :, 3], label = "err + 2cov")
+        plot!(log.(λs), Err_boot[i, :, 1], label = "err")
+        errs, _, _, _ = cv_mono_ss(x, y, λs, nfold = 10)
+        plot!(errfig, log.(λs), errs, label = "10 fold CV")
+        errs2, _, _, _ = cv_mono_ss(x, y, λs, nfold = n)
+        plot!(errfig, log.(λs), errs2, label = "LOOCV")
+        savefig(errfig, "$figfolder/err-$f-$σ-$i.png")
+        savefig(plot(log.(λs), cp), "$figfolder/cp-$f-$σ-$i.png")
+        # sample_G_λ(Ghat, B, x, y, f, λs/n, nB = nB, figname = ifelse(fig, "$figfolder/fit-$f-$σ-$i.png", nothing))            
         if fig
             if cvλ
                 savefig(plot(log.(λs), log.(errs)), "$figfolder/cv-$f-$i.png")
@@ -210,7 +212,7 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
         end                    
     end
     serialize("$f-n$n-σ$σ-nrep$nrep-B$nB-K$K-λ$λ-η$η-nepoch$nepoch-$timestamp.sil", [res_covprob, res_overlap, res_err, res_time, Err_boot])
-    return mean(res_overlap, dims=1)[1,:], mean(res_covprob, dims=1)[1,:], mean(res_err, dims=1)[1,:,:], mean(res_time)
+    return mean(res_overlap, dims=1)[1,:], mean(res_covprob, dims=1), mean(res_err, dims=1)[1,:,:], mean(res_time)
 end
 
 function check_acc(; n = 100, σ = 0.1, f = exp, 
@@ -877,7 +879,7 @@ end
 
 Load trained model from `model_file`.
 """
-function load_model(model_file::String; dim_lam = 8, gpu_id = 3)
+function load_model(B::Matrix, model_file::String; dim_lam = 8, gpu_id = 3)
     params = split_keystr(basename(model_file))
     n = params["n"]
     J = params["J"]
@@ -887,7 +889,7 @@ function load_model(model_file::String; dim_lam = 8, gpu_id = 3)
 end
 
 # deprecated
-function load_model(n::Int, J::Int, nhidden::Int, model_file::String; dim_lam = 8, gpu_id = 3)
+function load_model(n::Int, J::Int, nhidden::Int, B::Matrix, model_file::String; dim_lam = 8, gpu_id = 3)
     Ghat = _py_boot."load_model"(n, dim_lam, J, nhidden, model_file, gpu_id)
     return (y, λ) -> B * py"$Ghat"(Float32.(vcat(y, aug(λ))))
 end

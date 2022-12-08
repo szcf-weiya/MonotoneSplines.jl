@@ -339,7 +339,11 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
 def load_model(n, dim_lam, J, nhidden, model_file, gpu_id = 3):
     device = f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu"
     model = Model(n + dim_lam, J, nhidden).to(device)
-    model.load_state_dict(torch.load(model_file))
+    # https://pytorch.org/tutorials/recipes/recipes/save_load_across_devices.html
+    if device == "cpu":
+        model.load_state_dict(torch.load(model_file, map_location=torch.device("cpu")))
+    else:
+        model.load_state_dict(torch.load(model_file))
     G = lambda y: model(torch.from_numpy(y[None,:]).to(device)).cpu().detach().numpy().squeeze()
     return G
 
