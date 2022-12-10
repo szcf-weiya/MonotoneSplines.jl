@@ -50,7 +50,7 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
         nepoch = 0
     end
     nλ = length(λs)
-    res_time = zeros(nrep, 4) # OPT fit (discrete lambda, 20 lambda) & MLP generator (continue lambda, infty) 
+    res_time = zeros(nrep, 5) # OPT fit (discrete lambda, 20 lambda) & MLP generator (continue lambda, infty) & MLP eval
                              # OPT ci (single lambda) & MLP generator (continue lambda)
     res_err = zeros(nrep, 3) 
     Err_boot = zeros(nrep, nλ, 3)
@@ -155,7 +155,9 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
                 _, YCI = MonotoneSplines.ci_mono_ss(x, y, λ, prop_nknots=prop_nknots, B = nB)
             end
             RES_YCI0[j] = YCI
-            yhat = Ghat(y, λ)
+            res_time[i, 4] += @elapsed begin
+                yhat = Ghat(y, λ)                
+            end
             Yhat[j, :] .= yhat
             rel_gap = Flux.Losses.mse(Yhat0[j, :], yhat) / Flux.Losses.mse(Yhat0[j, :], zeros(n))
             fit_ratio = Flux.Losses.mse(yhat, y) / Flux.Losses.mse(Yhat0[j, :], y)
@@ -168,7 +170,7 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
             end
         end
         savefig(fitfig, "$figfolder/fit-$f-$σ-$i.png")
-        res_time[i, 4] = @elapsed begin
+        res_time[i, 5] = @elapsed begin
             RES_YCI, cov_hat = sample_G_λ(Ghat, y, λs, nB = nB)               
         end
         cp = [coverage_prob(YCI, f.(x)) for YCI in RES_YCI]
