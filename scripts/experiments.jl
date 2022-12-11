@@ -114,8 +114,8 @@ run(`for i in {1..10}; do convert fit-$f-$i.png loss-$f-$i.png +append $f-$i.png
 
 ## 2022-12-08 12:45:51 (compare the running time)
 for prop in [0.2]
-    for n in [50, 100, 200, 500, 1000]
-        check_CI(n=n, σ = 0.2, f = cubic, nrep = 5, η = 1e-4, η0 = 1e-4, check_acc=false, nepoch=100, nepoch0=5, K0=32, K =32, λ = 0.0, nB=2000, fig=true, cvλ =false, figfolder=pwd(), λs = exp.(range(-8, -2, length = 100)), γ = 0.9, method="lambda", prop_nknots=prop, seed=238, demo = true, gpu_id=2, niter_per_epoch=10000, nhidden=1000, decay_step=500, step2_use_tensor=true)
+    for n in [50, 100, 200, 500, 1000, 2000, 5000]
+        check_CI(n=n, σ = 0.2, f = cubic, nrep = 2, η = 1e-4, η0 = 1e-4, check_acc=true, nepoch=100, nepoch0=5, K0=32, K =32, λ = 0.0, nB=2000, fig=true, cvλ =false, figfolder=pwd(), λs = exp.(range(-8, -2, length = 10)), γ = 0.9, method="lambda", prop_nknots=prop, seed=238, demo = true, gpu_id=2, niter_per_epoch=10000, nhidden=1000, decay_step=500, step2_use_tensor=true)
         # plot cannot be distinguished
         for i = 1:5
             run(`mv cubic-0.2-$i.png cubic-$n-$prop-$i.png`)
