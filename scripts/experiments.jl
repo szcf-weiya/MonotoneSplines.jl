@@ -122,3 +122,19 @@ for prop in [0.2]
         end
     end
 end
+
+## 2022-12-11 14:27:35
+prop=0.2
+for σ in [0.1, 0.2, 0.5]
+    for f in [logit5, exp, cubic, sinhalfpi]
+        check_CI(n=100, σ = σ, f = f, nrep = 5, η = 1e-4, η0 = 1e-4, check_acc=true, nepoch=50, nepoch0=5, K0=32, K =32, λ = 0.0, nB=2000, fig=true, cvλ =false, figfolder=pwd(), λs = exp.(range(-8, -2, length = 10)), γ = 0.9, method="lambda", prop_nknots=prop, seed=238, demo = true, gpu_id=1, niter_per_epoch=10000, nhidden=1000, decay_step=500, step2_use_tensor=true)
+    end
+end
+
+# ci 
+prop = 0.2
+for σ in [0.1, 0.2, 0.5]
+    for f in [logit5, exp, cubic, sinhalfpi]
+        check_CI(n=100, σ = σ, f = f, nrep = 5, η = 1e-4, η0 = 1e-4, check_acc=false, nepoch=50, nepoch0=5, K0=32, K =32, λ = 0.0, nB=2000, fig=true, cvλ =false, figfolder=pwd(), λs = exp.(range(-8, -2, length = 10)), γ = 0.9, method="lambda", prop_nknots=prop, seed=238, demo = true, gpu_id=7, niter_per_epoch=10000, nhidden=1000, decay_step=500, step2_use_tensor=true)
+    end
+end

@@ -175,11 +175,11 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
                     niter_per_epoch = 100):
     #
     device = f"cuda:{gpu_id}" if torch.cuda.is_available() and gpu_id != -1 else "cpu"
-    y = torch.from_numpy(y[None, :]).to(device)
+    y = torch.from_numpy(y[None, :]).to(device, non_blocking=True)
     if debug_with_y0:
         y0 = torch.from_numpy(y0[None, :]).to(device)
-    B = torch.from_numpy(B).to(device)
-    L = torch.from_numpy(L).to(device)
+    B = torch.from_numpy(B).to(device, non_blocking=True)
+    L = torch.from_numpy(L).to(device, non_blocking=True)
     n, J = B.size()
     dim_lam = 8
     model = Model(n+dim_lam, J, nhidden, depth, use_torchsort, sort_reg_strength).to(device)
@@ -205,7 +205,7 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
         # else:
         #     lams = torch.rand((K, 1)).to(device) * (lam_up - lam_lo) + lam_lo
         for ii in pbar0:
-            lams = torch.rand((K, 1)).to(device) * (lam_up - lam_lo) + lam_lo
+            lams = torch.rand((K, 1), device = device) * (lam_up - lam_lo) + lam_lo
             ys = torch.cat((y.repeat( (K, 1) ), lams, torch.pow(lams, 1/3), torch.exp(lams), torch.sqrt(lams), 
                                                 torch.log(lams), 10*lams, torch.square(lams), torch.pow(lams, 3)), dim = 1) # repeat works regardless of y has been augmented via `y[None, :]`
             betas = model(ys)
@@ -225,7 +225,7 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
         
         for i in range(3):
             lam = query_lams[i]
-            aug_lam = torch.tensor(aug(lam), dtype=torch.float32).to(device)
+            aug_lam = torch.tensor(aug(lam), dtype=torch.float32, device = device)
             ylam = torch.cat((y, aug_lam.repeat((1, 1))), dim=1)
             beta = model(ylam)
             ypred = torch.matmul(beta, B.t())
@@ -252,7 +252,7 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
             if step2_use_tensor:
                 # construct tensor
                 lam = torch.rand((K0, 1, 1)) * (lam_up - lam_lo) + lam_lo
-                aug_lam = torch.cat(aug(lam), dim=2).to(device) # K0 x 1 x 8
+                aug_lam = torch.cat(aug(lam), dim=2).to(device, non_blocking=True) # K0 x 1 x 8
                 ylam = torch.cat((y.repeat(K0, 1, 1), aug_lam), dim=2) # K0 x 1 x (n+8)
                 # K0 x 1 x J
                 if eval_sigma_adaptive:
@@ -262,7 +262,7 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
                 # K0 x 1 x n
                 ypred = torch.matmul(beta, B.t())
                 sigma = torch.std(ypred - y, unbiased = True, dim = 2, keepdim = True) # K0 x 1 x 1 (keepdim), otherwise K0 x 1
-                epsilons = torch.randn((K0, K, n)).to(device) * sigma
+                epsilons = torch.randn((K0, K, n), device = device) * sigma
 
                 # construct training dataset
                 ytrain = ypred + epsilons # K0 x K x n
@@ -306,7 +306,7 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
                 LOSS[epoch, 0] = loss2.item()
         for i in range(3):
             lam = query_lams[i]
-            aug_lam = torch.tensor(aug(lam), dtype=torch.float32).to(device)
+            aug_lam = torch.tensor(aug(lam), dtype=torch.float32, device = device)
             ylam = torch.cat((y, aug_lam.repeat((1, 1))), dim=1)
             beta = model(ylam).detach()
             ypred = torch.matmul(beta, B.t())

@@ -63,11 +63,11 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
     for i = 1:nrep
         if nrep == 1
             x = rand(MersenneTwister(seed), n) * 2 .- 1
-            y = f.(x) + randn(MersenneTwister(seed-1), n) * σ # to avoid the same random seed
+            y = f.(x) + randn(MersenneTwister(seed+1), n) * σ # to avoid the same random seed
         else
             seed = Int(rand(UInt8))
             x = rand(MersenneTwister(seed), n) * 2 .- 1
-            y = f.(x) + randn(MersenneTwister(seed-1), n) * σ    
+            y = f.(x) + randn(MersenneTwister(seed+1), n) * σ
             # x = rand(n) * 2 .- 1
             # y = f.(x) + randn(n) * σ    
         end
