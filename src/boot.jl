@@ -343,8 +343,9 @@ function train_Gλ(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMat
                                         niter_per_epoch = 100, nepoch = 3,
                                         device = :cpu,
                                         model_file = "/tmp/model_G.bson",
-                                        sort_in_nn = false,
-                                        eval_in_batch = true,
+                                        sort_in_nn = true,
+                                        eval_in_batch = false, # TODO: need further checking (Clouds#143)
+                                        disable_progressbar = false,
                                         λl = 1e-4, λu = 1e-3, kw...)
     device = eval(device)
     y = device(rawy)
@@ -382,7 +383,8 @@ function train_Gλ(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMat
     end
     train_loss = Float64[]
     for epoch in 1:nepoch
-        @showprogress 1 "Train G(λ): " for i in 1:niter_per_epoch
+        p = Progress(niter_per_epoch, dt = 1, desc = "Train G(λ): ", enabled = !disable_progressbar)
+        for i in 1:niter_per_epoch
             λs = rand(M) * (λu - λl) .+ λl
             if eval_in_batch
                 Flux.train!(loss_batch, Flux.params(G), [(λs,)], opt)
@@ -406,7 +408,8 @@ end
 function train_Gyλ(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMatrix, model_file::String; device = :cpu, 
                         niter_per_epoch = 100, nepoch = 3, λl = 1e-4, λu = 1e-3,
                         sort_in_nn = true,
-                        M = 10)
+                        disable_progressbar = false,
+                        M = 10, kw...)
     device = eval(device)
     y = device(rawy)
     B = device(rawB)
@@ -435,10 +438,12 @@ function train_Gyλ(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMa
     end
     losses(λs::Vector) = mean([loss(λ) for λ in λs])
     for epoch in 1:nepoch
-        @showprogress 1 "Train G(y, λ): " for i in 1:niter_per_epoch
+        p = Progress(niter_per_epoch, dt = 1, desc = "Train G(y, λ): ", enabled = !disable_progressbar)
+        for i in 1:niter_per_epoch
             λs = rand(M) * (λu - λl) .+ λl
             Flux.train!(losses, Flux.params(G), [λs], opt)
             append!(train_loss, losses(λs))
+            next!(p)
         end
     end
     G = cpu(G)
@@ -458,13 +463,20 @@ end
 
 Fit monotone smoothing spline by training a MLP generator.
 """
-function mono_ss_mlp(x::AbstractVector, y::AbstractVector; prop_nknots = 0.2, backend = "flux", λl = 1e-5, λu = 1e-4, device = :cpu, kw...)
+function mono_ss_mlp(x::AbstractVector, y::AbstractVector; prop_nknots = 0.2, 
+                                                        backend = "flux", λl = 1e-5, λu = 1e-4, 
+                                                        device = :cpu, 
+                                                        nhidden = 100,
+                                                        disable_progressbar = false, # for pytorch backend (see #2)
+                                                        kw...)
     B, Bnew, L, J = build_model(x, true, prop_nknots = prop_nknots)
     if backend == "flux"
-        Ghat, LOSS = train_Gλ(y, B, L; λl = λl, λu = λu, device = device, kw...)
+        Ghat, LOSS = train_Gλ(y, B, L; λl = λl, λu = λu, device = device, nhidden = nhidden, disable_progressbar = disable_progressbar, kw...)
     else
         Ghat, LOSS = py_train_G_lambda(y, B, L; nepoch = 0, nepoch0 = 3, 
                                                 λl = λl, λu = λu, 
+                                                disable_tqdm = disable_progressbar,
+                                                nhidden = nhidden,
                                                 gpu_id = ifelse(device == :cpu, -1, 0), kw...)
     end
     return Ghat, LOSS
@@ -484,6 +496,8 @@ function ci_mono_ss_mlp(x::AbstractVector{T}, y::AbstractVector{T}, λs::Abstrac
                                                                         M = 10,
                                                                         nhidden = 100,
                                                                         step2_use_tensor = false,
+                                                                        disable_progressbar = false,
+                                                                        sort_in_nn = true, eval_in_batch = false, # only Flux
                                                                         device = :cpu, kw...) where T <: AbstractFloat
     B, Bnew, L, J = build_model(x, true, prop_nknots = prop_nknots)
     model_file *= ifelse(backend == "flux", ".bson", ".pt")
@@ -493,12 +507,16 @@ function ci_mono_ss_mlp(x::AbstractVector{T}, y::AbstractVector{T}, λs::Abstrac
         Ghat0, loss0 = train_Gλ(y, B, L; λl = λl, λu = λu,
                                          device = device, model_file = model_file, 
                                          niter_per_epoch = niter_per_epoch,
+                                         sort_in_nn = sort_in_nn, eval_in_batch = eval_in_batch,
                                          nhidden = nhidden,
+                                         disable_progressbar = disable_progressbar,
                                          nepoch = nepoch0, kw...)
         Ghat, loss = train_Gyλ(y, B, L, model_file; device = device, 
                                          nepoch = nepoch, niter_per_epoch = niter_per_epoch,
                                          λl = λl, λu = λu,
+                                         sort_in_nn = sort_in_nn,
                                          M = M,
+                                         disable_progressbar = disable_progressbar,
                                          kw...)
         LOSS = vcat(loss0, loss)                                         
     else
@@ -508,6 +526,7 @@ function ci_mono_ss_mlp(x::AbstractVector{T}, y::AbstractVector{T}, λs::Abstrac
                                                 nhidden = nhidden,
                                                 step2_use_tensor = step2_use_tensor,
                                                 niter_per_epoch = niter_per_epoch,
+                                                disable_tqdm = disable_progressbar,
                                                 K = M, K0 = M, kw...)
     end
     Yhat = hcat([Ghat(y, λ) for λ in λs]...)
@@ -845,8 +864,9 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
                             model_file = "model_G.pt",
                             gpu_id = 0,
                             niter_per_epoch = 100,
-                            step2_use_tensor = false,
+                            step2_use_tensor = true,
                             figname = "pyloss.png", # not plot if nothing
+                            disable_tqdm = false,
                             kw...
                             )
     # Ghat, LOSS1, LOSS2 = py"train_G"(Float32.(y), Float32.(B), eta = η, K = K, nepoch = nepoch, sigma = σ)
@@ -865,7 +885,8 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
                                             patience0 = patience0, patience=patience, disable_early_stopping = disable_early_stopping,
                                             niter_per_epoch = niter_per_epoch,
                                             step2_use_tensor = step2_use_tensor,
-                                            nhidden = nhidden, depth = depth)#::Tuple{PyObject, PyArray}
+                                            nhidden = nhidden, depth = depth,
+                                            disable_tqdm = disable_tqdm)#::Tuple{PyObject, PyArray}
     #println(typeof(py_ret)) #Tuple{PyCall.PyObject, Matrix{Float32}} 
     # ....................... # Tuple{PyCall.PyObject, PyCall.PyArray{Float32, 2}}
     #LOSS = Matrix(py_ret[2]) # NB: not necessarily a matrix, but possibly a matrix

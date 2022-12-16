@@ -1,26 +1,45 @@
 using MonotoneSplines
 using Plots
 
-# First of all, generate data $y = exp(x) + ϵ$,
+# We want to train a MLP generator $G(λ)$ to approximate the solution for the monotone spline.
+# $$
+# \def\bfy{\mathbf{y}}
+# \def\bB{\mathbf{B}}
+# \def\bOmega{\boldsymbol{\Omega}}
+# \def\subto{\mathrm{s.t.}}
+# $$
+# 
+# $$
+# \begin{align}
+# \min_{\gamma} & (\bfy - \bB\gamma)^T(\bfy - \bB\gamma) + \lambda\gamma^T\bOmega\gamma\\
+# \subto\, & \alpha\gamma_1 \le \cdots \le \alpha\gamma_J 
+# \end{align}
+# $$
+
+# First of all, generate data $y = \exp(x) + ϵ$,
 n = 20
 σ = 0.1
 x, y, x0, y0 = gen_data(n, σ, exp, seed = 1234);
 
-# ## single lambda
-# Here we train a MLP network $G(\lambda = λ_0)$ to approximate the solution $\hat\gamma_{\lambda_0}$.
-λ = 1e-5
+# ## single $λ$
+# Here we train a MLP network $G(\lambda = λ_0)$ to approximate the solution.
+λ = 1e-5;
 
-# By default, we use `Flux` deep learning framework,
-@time Ghat, loss = mono_ss_mlp(x, y, λl = λ, λu = λ, device = :cpu, prop_nknots = 0.2);
+# By default, we use [Flux.jl](https://fluxml.ai/Flux.jl/stable/) deep learning framework,
+Ghat, loss = mono_ss_mlp(x, y, λl = λ, λu = λ, device = :cpu, disable_progressbar = true); # hide 
+@time Ghat, loss = mono_ss_mlp(x, y, λl = λ, λu = λ, device = :cpu, disable_progressbar = true);
 
-# we also support Pytorch backend
-@time Ghat2, loss2 = mono_ss_mlp(x, y, λl = λ, λu = λ, device = :cpu, prop_nknots = 0.2, backend = "pytorch");
+# we also support the well-known PyTorch backend with the help of `PyCall.jl`,
+@time Ghat2, loss2 = mono_ss_mlp(x, y, λl = λ, λu = λ, device = :cpu, backend = "pytorch", disable_progressbar = true);
+
+# !!! note
+#     Showing the progressbar is quite useful in practice, but here in the documenter environment, it cannot display properly, so currently I simply disable it via `disable_progressbar = true`.
 
 # plot the log training loss
 plot(log.(loss), label = "Flux")
 plot!(log.(loss2), label = "Pytorch")
 
-# Evaluate at $λ$,
+# The fitting can be obtained via evaluating at $λ$,
 yhat = Ghat(y, λ);
 yhat2 = Ghat2(y, λ);
 
@@ -35,7 +54,7 @@ plot!(x, yhat0, label = "OPT solution")
 plot!(x, yhat2, label = "MLP generator (Pytorch)", ls = :dash, lw = 2)
 # The fitting curves obtained from optimization solution and MLP generator overlap quite well.
 
-# ## lambda interval
+# ## continus $λ$
 # Here we train a generator $G(\lambda), \lambda\in [\lambda_l, \lambda_u]$,
 λl = 1e-2
 λu = 1e-1

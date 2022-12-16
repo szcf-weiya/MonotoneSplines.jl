@@ -172,7 +172,8 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
                     eval_sigma_adaptive = False, # if False, use `model0` to evaluate sigma
                     model_file = "model_G.pt", 
                     step2_use_tensor = False,
-                    niter_per_epoch = 100):
+                    niter_per_epoch = 100,
+                    disable_tqdm = False):
     #
     device = f"cuda:{gpu_id}" if torch.cuda.is_available() and gpu_id != -1 else "cpu"
     y = torch.from_numpy(y[None, :]).to(device, non_blocking=True)
@@ -199,7 +200,7 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
     def aug(lam):
         return [lam, lam**(1/3), np.exp(lam), np.sqrt(lam), np.log(lam), 10*lam, lam**2, lam**3]
     for epoch in range(nepoch0):
-        pbar0 = tqdm.trange(niter_per_epoch, desc="Training G(lambda)")
+        pbar0 = tqdm.trange(niter_per_epoch, desc="Training G(lambda)", disable=disable_tqdm)
         # if epoch < stage_nepoch0:
         #     lams = torch.ones((K, 1)).to(device) * lam_lo #* (lam_up + lam_lo) / 2
         # else:
@@ -247,7 +248,7 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
     early_stopping = EarlyStopping(patience = patience, verbose = False, path = model_file)
     # for epoch in range(nepoch):
     for epoch in range(nepoch):
-        pbar = tqdm.trange(niter_per_epoch, desc="Training G(y, lambda)")
+        pbar = tqdm.trange(niter_per_epoch, desc="Training G(y, lambda)", disable=disable_tqdm)
         for ii in pbar:
             if step2_use_tensor:
                 # construct tensor
