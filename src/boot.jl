@@ -444,7 +444,7 @@ end
 """
     train_Gyλ(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMatrix, model_file::String)
 
-Train MLP generator G(y, λ) for λ ∈ [λl, λu] and y ~ N(̂y, ̂σ²)
+Train MLP generator G(y, λ) for λ ∈ [λl, λu] and y ~ N(f, σ²)
 """
 function train_Gyλ(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMatrix, model_file::String; device = :cpu, 
                         niter_per_epoch = 100, nepoch = 3, λl = 1e-4, λu = 1e-3,

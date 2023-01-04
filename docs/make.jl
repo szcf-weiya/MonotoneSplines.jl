@@ -20,9 +20,9 @@ makedocs(sitename="MonotoneSplines.jl",
                 "Differentiable Sort" => "examples/diff_sort.md"
             ],
             "API" => "api.md"
-        ],
-        # format = Documenter.HTML(
-        #     mathengine = MathJax2()
-        # ),
-        repo = "github.com/szcf-weiya/MonotoneSplines.jl"
+        ]        
+)
+
+deploydocs(
+    repo = "github.com/szcf-weiya/MonotoneSplines.jl"
 )
