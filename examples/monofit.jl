@@ -1,3 +1,4 @@
+# This section shows how to conduct monotone fitting with monotone splines with the existing optimization toolbox. The smoothing parameter can be tuned by cross-validation. We also compare the monotone splines with the popular smoothing splines (R's implementation `smooth.spline`). 
 using MonotoneSplines
 using Plots
 using Random
@@ -42,7 +43,7 @@ spl = R"smooth.spline($x, $y)"
 yhat_ss = rcopy(R"predict($spl, $x)$y")
 scatter!(x, yhat_ss)
 
-# For ease of demonstrating other examples, we wrap up the above procedures as functions
+# For ease of demonstrating other examples, we wrap up the above procedures as a function
 function demo_mono_ss(x, y, λs)
     errs, B, L, J = MonotoneSplines.cv_mono_ss(x, y, λs)
     fig1 = plot(log.(λs), errs, xlab = "λ", ylab = "CV error", legend=false)

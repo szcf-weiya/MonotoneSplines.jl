@@ -1,20 +1,18 @@
+# This section illustrates how to use the MLP generator to perform the monotone fitting. The MLP generator can achieve a perfect approximation to the fitting curve obtained from the optimization toolbox quickly. Particulaly, the MLP generator can save time by avoiding repeating to run the optimization toolbox for continuous $\lambda$ since it only needs to train once to obtain the function $G(\lambda)$, which can immediately return the solution at $\lambda=\lambda_0$ by simply evaluating $G(\lambda_0)$.
 using MonotoneSplines
 using Plots
 
 # We want to train a MLP generator $G(λ)$ to approximate the solution for the monotone spline.
-# $$
+# ```math
 # \def\bfy{\mathbf{y}}
 # \def\bB{\mathbf{B}}
 # \def\bOmega{\boldsymbol{\Omega}}
 # \def\subto{\mathrm{s.t.}}
-# $$
-# 
-# $$
-# \begin{align}
+# \begin{aligned}
 # \min_{\gamma} & (\bfy - \bB\gamma)^T(\bfy - \bB\gamma) + \lambda\gamma^T\bOmega\gamma\\
 # \subto\, & \alpha\gamma_1 \le \cdots \le \alpha\gamma_J 
-# \end{align}
-# $$
+# \end{aligned}
+# ```
 
 # First of all, generate data $y = \exp(x) + ϵ$,
 n = 20

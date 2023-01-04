@@ -15,10 +15,14 @@ makedocs(sitename="MonotoneSplines.jl",
             "Home" => "index.md",
             "Examples" => [
                 "Monotone Fitting" => "examples/monofit.md",
-                "MLP Generator (fitting)" => "examples/monofit_mlp.md",
-                "MLP Generator (CI)" => "examples/monoci_mlp.md",
+                "MLP Generator (fitting curve)" => "examples/monofit_mlp.md",
+                "MLP Generator (confidence band)" => "examples/monoci_mlp.md",
                 "Differentiable Sort" => "examples/diff_sort.md"
             ],
             "API" => "api.md"
-        ]
+        ],
+        # format = Documenter.HTML(
+        #     mathengine = MathJax2()
+        # ),
+        repo = "github.com/szcf-weiya/MonotoneSplines.jl"
 )

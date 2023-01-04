@@ -21,30 +21,65 @@ logit(x) = 1/(1+exp(-x))
 logit5(x) = 1/(1+exp(-5x))
 sinhalfpi(x) = sin(pi/2 * x)
 
-function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200, 
-                        K = 10, nrep = 100, α = 0.05, C = 1, η = 0.001, method = "pytorch",
-                        K0 = 10,
-                        λ = 0.1, cvλ = false, λs = exp.(range(-10, -4, length = 100)),
-                        amsgrad = true,
-                        γ = 0.9,
-                        η0 = 0.0001,
-                        demo = false,
-                        max_norm = 2000.0, clip_ratio = 1000.0,
-                        debug_with_y0 = false,
-                        decay_step = 5,
-                        nepoch0 = 100, N1 = 100, N2 = 100,
-                        seed = 1234,
-                        prop_nknots = 1.0,
-                        nhidden = 1000, depth = 2,
-                        gpu_id = 3,
-                        model_file = nothing,
-                        step2_use_tensor = false,
-                        niter_per_epoch = 100, cooldown2 = 10,
-                        patience = 100, cooldown = 100,
-                        sort_in_nn = true, # only flux
-                        check_acc = false, # reduce to check_acc
-                        fig = true, figfolder = "~", kw...
-                        )
+"""
+    check_CI(; <keyword arguments>)
+
+Conduct repeated experiments to check the overlap of confidence bands (default, `check_acc = false`) or accuracy of fitting curves (`check_acc = true`) between MLP generator and OPT solution. 
+
+## Arguments
+
+- `n = 100`: sample size
+- `σ = 0.1`: noise level
+- `f::Function = exp`: the truth curve
+- `seed = 1234`: random seed for the simulated data
+- `check_acc = false`: check overlap of confidence bands (default: false) or accuracy of fitting curves (true)
+- `nepoch0 = 5`: number of epoch in the first step to fit the curve
+- `nepoch = 50`: number of epoch in the second step to obtain the confidence band
+- `niter_per_epoch = 100`: number of iterations in each epoch
+- `η0 = 1e-4`: learning rate in step 1
+- `η = 1e-4`: learning rate in step 2 (NOTE: lr did not make much difference, unify these two)
+- `K0 = 32`: Monte Carlo size for averaging `λ` in step 2
+- `K = 32`: Monte Carlo size for averaging `λ` in step 1 and for averaging `y` in step 2. (NOTE: unify these two Monte Carlo size)
+- `nB = 2000`: number of bootstrap replications
+- `nrep = 5`: number of repeated experiments
+- `fig = true`: whether to plot
+- `figfolder = ~`: folder for saving the figures if `fig = true`
+- `λs = exp.(range(-8, -2, length = 10))`: region of continuous `λ`
+- `nhidden = 1000`: number of hidden layers
+- `depth = 2`: depth of MLP
+- `demo = false`: whether to save internal results for demo purpose
+- `model_file = nothing`: if not nothing, load the model from the file.
+- `gpu_id = 0`: specify the id of GPU, -1 for CPU.
+- `prop_nknots = 0.2`: proportion of number of knots in B-spline basis. 
+- `method = "lambda"`: train MLP generator with PyTorch; if `jl_lambda`, train with Flux; if `lambda_from_file`, load model from file. (NOTE: rename to backend keyword)
+"""
+function check_CI(; n = 100, σ = 0.1, f = exp, seed = 1234, 
+                    nepoch0 = 5, nepoch = 50, niter_per_epoch = 100, 
+                    η0 = 1e-4, η = 1e-4, 
+                    nrep = 5, α = 0.05, C = 1, 
+                    method = "pytorch", # TODO: rename to backend
+                    K0 = 10, K = 10,
+                    nB = 2000, 
+                    λ = 0.1, cvλ = false, # deprecated
+                    λs = exp.(range(-8, -2, length = 10)),
+                    amsgrad = true, # deprecated (not big difference)
+                    γ = 0.9, # deprecated
+                    demo = false, # save internal results for demo purpose
+                    max_norm = 2000.0, clip_ratio = 1000.0, # deprecated
+                    debug_with_y0 = false, # deprecated
+                    decay_step = 5, # deprecated
+                    N1 = 100, N2 = 100, # deprecated
+                    prop_nknots = 1.0,
+                    nhidden = 1000, depth = 2,
+                    gpu_id = 3,
+                    model_file = nothing,
+                    step2_use_tensor = false, # deprecated
+                    cooldown2 = 10, # deprecated
+                    patience = 100, cooldown = 100, # deprecated
+                    sort_in_nn = true, # only flux
+                    check_acc = false, # reduce to check_acc
+                    fig = true, figfolder = "~", kw...
+                    )
     timestamp = replace(strip(read(`date -Iseconds`, String)), ":" => "_")
     if check_acc
         nepoch = 0
@@ -217,6 +252,7 @@ function check_CI(;n = 100, σ = 0.1, f = exp, nB = 1000, nepoch = 200,
     return mean(res_overlap, dims=1)[1,:], mean(res_covprob, dims=1), mean(res_err, dims=1)[1,:,:], mean(res_time)
 end
 
+# deprecate to check_CI
 function check_acc(; n = 100, σ = 0.1, f = exp, 
                         nrep = 10,
                         M = 10,
@@ -313,7 +349,7 @@ function check_acc(; n = 100, σ = 0.1, f = exp,
 end
 
 """
-    aug(λ)
+    aug(λ::AbstractFloat)
 
 Augment `λ` with 8 different functions.
 """
@@ -332,7 +368,7 @@ Zygote.@adjoint function batch_sort(x::Matrix)
 end
 
 """
-    train_G(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMatrix; λl, λu)
+    train_Gλ(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMatrix; λl, λu)
 
 Train MLP generator G(λ) for λ ∈ [λl, λu].
 """
@@ -405,6 +441,11 @@ function train_Gλ(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMat
     end
 end
 
+"""
+    train_Gyλ(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMatrix, model_file::String)
+
+Train MLP generator G(y, λ) for λ ∈ [λl, λu] and y ~ N(̂y, ̂σ²)
+"""
 function train_Gyλ(rawy::AbstractVector, rawB::AbstractMatrix, rawL::AbstractMatrix, model_file::String; device = :cpu, 
                         niter_per_epoch = 100, nepoch = 3, λl = 1e-4, λu = 1e-3,
                         sort_in_nn = true,
@@ -462,6 +503,14 @@ end
     mono_ss_mlp(x::AbstractVector, y::AbstractVector; λl, λu)
 
 Fit monotone smoothing spline by training a MLP generator.
+
+## Arguments
+
+- `prop_nknots = 0.2`: proportion of number of knots
+- `backend = flux`: use `flux` or `pytorch`
+- `device = :cpu`: use `:cpu` or `:gpu`
+- `nhidden = 100`: number of hidden units
+- `disable_progressbar = false`: disable progressbar (useful in Documenter.jl)
 """
 function mono_ss_mlp(x::AbstractVector, y::AbstractVector; prop_nknots = 0.2, 
                                                         backend = "flux", λl = 1e-5, λu = 1e-4, 
@@ -486,6 +535,21 @@ end
     ci_mono_ss_mlp(x::AbstractVector{T}, y::AbstractVector{T}, λs::AbstractVector{T}; )
 
 Fit data `x, y` at each `λs` with confidence bands.
+
+## Arguments
+
+- `prop_nknots = 0.2`: proportion of number of knots
+- `backend = "flux"`: `flux` or `pytorch`
+- `model_file`: path for saving trained model
+- `nepoch0 = 3`: number of epoch in training step 1
+- `nepoch = 3`: number of epoch in training step 2
+- `niter_per_epoch = 100`: number of iterations in each epoch
+- `M = 10`: Monte Carlo size
+- `nhidden = 100`: number of hidden units
+- `disable_progressbar = false`: set true if generating documentation
+- `device = :cpu`: train using `:cpu` or `:gpu`
+- `sort_in_nn = true`: (only for backend = "flux") whether put `sort` in `MLP` 
+- `eval_in_batch = false`: (only for backend = "flux") Currently, `Flux` does not support `sort` in batch mode. A workaround with customized `Zygote.batch_sort` needs further verifications. 
 """
 function ci_mono_ss_mlp(x::AbstractVector{T}, y::AbstractVector{T}, λs::AbstractVector{T}; 
                                                                         prop_nknots = 0.2,
@@ -495,7 +559,7 @@ function ci_mono_ss_mlp(x::AbstractVector{T}, y::AbstractVector{T}, λs::Abstrac
                                                                         niter_per_epoch = 100, # can be set via kw...
                                                                         M = 10,
                                                                         nhidden = 100,
-                                                                        step2_use_tensor = false,
+                                                                        step2_use_tensor = false, # deprecated
                                                                         disable_progressbar = false,
                                                                         sort_in_nn = true, eval_in_batch = false, # only Flux
                                                                         device = :cpu, kw...) where T <: AbstractFloat
@@ -847,25 +911,45 @@ function py_train_G(y::AbstractVector, B::AbstractMatrix, L::AbstractMatrix, λ:
     return y -> py"$Ghat"(Float32.(y))
 end
 
+"""
+    py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatrix; <keyword arguments>)
+
+Wrapper for training MLP generator using PyTorch.
+
+## Arguments
+
+- `η0`, `η`: learning rate
+- `K0`, `K`: Monte Carlo size
+- `nepoch0`, `nepoch`: number of epoch
+- `nhidden`, `depth`: size of MLP
+- `λl`, `λu`: range of `λ`
+- `use_torchsort = false`: `torch.sort` (default: false) or `torchsort.soft_sort` (true)
+- `sort_reg_strength = 0.1`: tuning parameter when `use_torchsort = true`.
+- `model_file`: path for saving trained model
+- `gpu_id = 0`: use specified GPU
+- `niter_per_epoch = 100`: number of iterations in each epoch
+- `disable_tqdm = false`: set `true` when generating documentation
+"""
 function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatrix; 
-                            η = 0.001, η0 = 0.001, K = 10, nepoch = 100, σ = 1.0, 
-                            K0 = 10,
+                            η = 0.001, η0 = 0.001, 
+                            K0 = 10, K = 10, 
                             nhidden = 1000, depth = 2,
-                            amsgrad = true,
-                            γ = 0.9,
-                            max_norm = 2.0, clip_ratio = 1.0,
-                            decay_step = 5,
-                            patience = 100, patience0 = 100, disable_early_stopping = true,
-                            debug_with_y0 = false, y0 = 0, 
-                            nepoch0 = 100,
+                            σ = 1.0, # deprecated
+                            amsgrad = true, # deprecated
+                            γ = 0.9, # deprecated
+                            max_norm = 2.0, clip_ratio = 1.0, # deprecated
+                            decay_step = 5, # deprecated
+                            patience = 100, patience0 = 100, disable_early_stopping = true, # deprecated
+                            debug_with_y0 = false, y0 = 0, # deprecated
+                            nepoch0 = 100, nepoch = 100, 
                             λl = 1e-9, λu = 1e-4,
                             use_torchsort = false,
                             sort_reg_strength = 0.1,
                             model_file = "model_G.pt",
                             gpu_id = 0,
                             niter_per_epoch = 100,
-                            step2_use_tensor = true,
-                            figname = "pyloss.png", # not plot if nothing
+                            step2_use_tensor = true, # deprecated
+                            figname = "pyloss.png", # not plot if nothing # TODO: separate plot outside the function
                             disable_tqdm = false,
                             kw...
                             )

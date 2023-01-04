@@ -1,3 +1,4 @@
+# This section illustrates how to obtain the confidence band with MLP generator. The confidence bands, either with PyTorch backend or Flux backend, are compared with the one calculated from classical parametric bootstrap. 
 using MonotoneSplines
 using Plots
 
@@ -11,7 +12,7 @@ x, y, x0, y0 = gen_data(n, σ, exp, seed = 1234);
 λu = 1e-1
 λs = range(λl, λu, length = 2)
 
-# Run the optimization toolbox to fit the monotone spline, and use (parametric) bootstrap apprach to obtain the confidence band of the fitted curve.
+# Run the optimization toolbox to fit the monotone spline, and conduct (parametric) bootstrap to obtain the confidence band of the fitted curve.
 @time RES0 = [ci_mono_ss(x, y, λ, prop_nknots = 0.2) for λ in λs]
 Yhat0 = hcat([RES0[i][1] for i=1:2]...)
 YCIs0 = [RES0[i][2] for i = 1:2]
@@ -35,7 +36,7 @@ plot!(log.(LOSS2), label = "MLP generator (PyTorch)")
 [MonotoneSplines.jaccard_index(YCIs2[i], YCIs0[i]) for i = 1:2]
 
 # !!! note
-#     For simple demonstration, the training might not be sufficient, then the Jaccard index might not be good enough. For a better performance, please train it with a larger `nepoch` and `nepoch0`.
+#     For simple demonstration, the training might not be sufficient, so the Jaccard index might not be good enough. For a better performance, please train it with a larger `nepoch` and `nepoch0`.
 
 # Plot the fitted curves and their confidence bands.
 

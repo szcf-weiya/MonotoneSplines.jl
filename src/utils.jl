@@ -55,7 +55,7 @@ end
 
 Partial code for picking knots in R's `smooth.spline`.
 
-The source code of `smooth.spline` can be directly accessed via typing `smooth.spline` is an R session. Note that there might be different in different R versions. The code is adapted based on R 3.6.3.
+The source code of `smooth.spline` can be directly accessed via typing `smooth.spline` is an R session. Note that there might be some differences in different R versions. The code is adapted based on R 3.6.3.
 """
 # refer to `smooth.spline`
 function pick_knots(x::AbstractVector{T}; tol = 1e-6 * iqr(x), all_knots = false, scaled = false, prop_nknots = 1.0) where T <: AbstractFloat
@@ -107,9 +107,14 @@ end
 
 # cubic splines
 """
-    build_model(x::AbstractVector{T}, J::Int)
-    build_model(x::AbstractVector{T}, scaled::Bool)
-    build_model(x::AbstractVector{T})
+    build_model(x::AbstractVector{T}, J::Int; <keyword arguments>)
+
+Construct design matrix and other internal variables for cubic spline with `J` basis functions.
+
+## Arguments
+
+- `xboundary = nothing`: the boundary of `x`, if `nothing`, set it to be `[min_x, max_x]`.
+- `xnew = nothing`: evaluate B-spline design matrix on `xnew` if not nothing.
 
 ## Returns
 
@@ -117,7 +122,6 @@ end
 - `Bnew` at new points `xnew` if it is not `nothing`
 - `L = nothing`: keep same return list for model of smoothing splines
 - `J`: number of basis functions, which does not change for cubic splines, so it is only intended for smoothing splines 
-- `mx, rx, idx, idx0`: the remaining only for smoothing splines
 """
 function build_model(x::AbstractVector{T}, J::Int; xboundary = nothing, xnew = nothing, ε = (eps())^(1/3)) where T <: AbstractFloat
     Bnew = nothing
@@ -134,6 +138,30 @@ function build_model(x::AbstractVector{T}, J::Int; xboundary = nothing, xnew = n
 end
 
 # smoothing splines
+"""
+    build_model(x::AbstractVector{T}, scaled::Bool; <keyword arguments>)
+
+Construct design matrix and other internal variables for smoothing spline. If `scaled`, `x` is scaled to `[0, 1]`.
+
+## Arguments
+
+- `xboundary = nothing`: the boundary of `x`, if `nothing`, set it to be `[min_x, max_x]`.
+- `xnew = nothing`: evaluate B-spline design matrix on `xnew` if not nothing.
+- `all_knots = false`: whether to use all knots. If `false`, use the same rule as in R's `smooth.spline`.
+- `prop_nknots = 1.0`: a proportion for using fewer knots. Suppose the number of knots is `nknots`, then the final number of knots is `prop_nknots` * `nknots`. Currently, it is only effective when `all_knots = false`.
+- `ε = 6.06e-6`: a small number added to the diagonal of matrix Ω to ensure it is positive definite.
+
+## Returns
+
+- B-spline design matrix `B` at `x` for cubic splines
+- `Bnew` at new points `xnew` if it is not `nothing`
+- `L = nothing`: keep same return list for model of smoothing splines
+- `J`: number of basis functions, which does not change for cubic splines, so it is only intended for smoothing splines 
+
+the above four are shared with the method for cubic splines, but for smoothing splines, it also returns 
+
+- `mx, rx, idx, idx0`: only for smoothing splines
+"""
 function build_model(x::AbstractVector{T}, scaled::Bool; xboundary = nothing, all_knots = false, xnew = nothing, ε = (eps())^(1/3), prop_nknots = 1.0) where T <: AbstractFloat
     Bnew = nothing
     knots, mx, rx, idx, idx0 = pick_knots(ifelse(isnothing(xboundary), x, vcat(x, xboundary)), all_knots = all_knots, scaled = scaled, prop_nknots = prop_nknots)
@@ -178,13 +206,18 @@ function build_model(x::AbstractVector{T}, scaled::Bool; xboundary = nothing, al
     return B, Bnew, L, J, mx, rx, idx, idx0
 end
 
+"""
+    build_model(x::AbstractVector{T}; λ, t)
+
+(deprecated) An unified function for constructing design matrix and other internal variables. It is cubic spline if both smoothness parameter `λ` and its corresponding threshold `t` are nothing, otherwise it is smoothing spline.
+"""
 function build_model(x::AbstractVector{T}; J = 10, xboundary = nothing, t = nothing, xnew = nothing, ε = (eps())^(1/3), all_knots = false, λ = nothing) where T <: AbstractFloat
     # t is the threshold, and λ is the corresponding Lagrange multipler
     if isnothing(t) & isnothing(λ)
         return build_model(x, J, xboundary = xboundary, xnew = xnew, ε = ε)
     else
         # to agree with old code, if t is given instead of lambda, scaled = false
-        return build_model(x, !isnothing(λ),xboundary = xboundary, all_knots = all_knots, xnew = xnew, ε = ε)
+        return build_model(x, !isnothing(λ), xboundary = xboundary, all_knots = all_knots, xnew = xnew, ε = ε)
     end
 end
 
