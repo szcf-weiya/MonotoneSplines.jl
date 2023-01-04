@@ -29,7 +29,8 @@ export check_CI,
         mono_ss_mlp,
         ci_mono_ss,
         ci_mono_ss_mlp,
-        gen_data
+        gen_data,
+        jaccard_index
 
 if Base.VERSION >= v"1.4.2"
     include("precompile.jl")

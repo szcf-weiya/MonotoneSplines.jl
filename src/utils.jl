@@ -232,11 +232,11 @@ Calculate Jaccard Index for two confidence intervals `a[i, :]` and `b[i, :]`
 """
 function jaccard_index(a::AbstractVector, b::AbstractVector)
     # suppose both a and b are CI
-    if a[1] < b[1]
-        if a[2] < b[1]
+    if a[1] <= b[1]
+        if a[2] <= b[1]
             return 0
         end
-        if a[2] < b[2]
+        if a[2] <= b[2]
             return (a[2] - b[1]) / (b[2] - a[1])
         else
             return (b[2] - b[1]) / (a[2] - a[1])
