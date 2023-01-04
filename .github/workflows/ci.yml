@@ -60,7 +60,7 @@ jobs:
         with:
           file: lcov.info
       - uses: julia-actions/julia-docdeploy@v1
-        if: ${{ matrix.os == "ubuntu-20.04" && matrix.julia-version == "1.8" && matrix.python-version == "3.8" }} # only run docs in one env
+        if: ${{ matrix.os == ubuntu-20.04 && matrix.julia-version == '1.8' && matrix.python-version == '3.8' }} # only run docs in one env
         with:
           prefix: LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libcurl.so.4
         env:
