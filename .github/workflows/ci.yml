@@ -54,4 +54,4 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # If authenticating with GitHub Actions token
           DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }} # If authenticating with SSH deploy key
           GKSwstype: "100" #https://juliadocs.github.io/Documenter.jl/stable/man/syntax/#@example-block
-        run: julia --project=docs/ docs/make.jl
+        run: LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libcurl.so.4 julia --project=docs/ docs/make.jl
