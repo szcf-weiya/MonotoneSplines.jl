@@ -54,17 +54,13 @@ function check_CI(; n = 100, σ = 0.1, f = exp, seed = 1234,
                     K0 = 10, K = 10,
                     nB = 2000, 
                     λs = exp.(range(-8, -2, length = 10)),
-                    amsgrad = true, # deprecated (not big difference)
                     γ = 0.9, # deprecated
                     demo = false, # save internal results for demo purpose
-                    max_norm = 2000.0, clip_ratio = 1000.0, # deprecated
-                    debug_with_y0 = false, # deprecated
                     decay_step = 5, # deprecated
                     prop_nknots = 1.0,
                     nhidden = 1000, depth = 2,
                     gpu_id = 3,
                     model_file = nothing,
-                    step2_use_tensor = false, # deprecated
                     cooldown2 = 10, # deprecated
                     patience = 100, cooldown = 100, # deprecated
                     sort_in_nn = true, # only flux
@@ -129,15 +125,14 @@ function check_CI(; n = 100, σ = 0.1, f = exp, seed = 1234,
                     Ghat, LOSS = py_train_G_lambda(y,
                                                     B, L, K = M, nepoch = nepoch, η = η, 
                                                     K0 = K0,
-                                                    amsgrad = amsgrad, γ = γ, η0 = η0, 
+                                                    γ = γ, η0 = η0, 
                                                     use_torchsort = false,
                                                     gpu_id = gpu_id,
                                                     nhidden = nhidden, depth = depth,
-                                                    step2_use_tensor = step2_use_tensor,
                                                     niter_per_epoch = niter_per_epoch, cooldown2 = cooldown2,
                                                     model_file = "model-$f-$σ-n$n-J$J-nhidden$nhidden-$i-$seed-$timestamp.pt",
                                                     patience = patience, cooldown = cooldown,
-                                                    decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, 
+                                                    decay_step = decay_step, 
                                                     nepoch0 = nepoch0, λl = λs[1], λu = λs[end])
                 end    
                 if fig
@@ -425,7 +420,6 @@ function ci_mono_ss_mlp(x::AbstractVector{T}, y::AbstractVector{T}, λs::Abstrac
                                                                         niter_per_epoch = 100, # can be set via kw...
                                                                         M = 10,
                                                                         nhidden = 100,
-                                                                        step2_use_tensor = false, # deprecated
                                                                         disable_progressbar = false,
                                                                         sort_in_nn = true, eval_in_batch = false, # only Flux
                                                                         device = :cpu, kw...) where T <: AbstractFloat
@@ -454,7 +448,6 @@ function ci_mono_ss_mlp(x::AbstractVector{T}, y::AbstractVector{T}, λs::Abstrac
                                                 gpu_id = ifelse(device == :cpu, -1, 0), 
                                                 λl = λl, λu = λu,
                                                 nhidden = nhidden,
-                                                step2_use_tensor = step2_use_tensor,
                                                 niter_per_epoch = niter_per_epoch,
                                                 disable_tqdm = disable_progressbar,
                                                 K = M, K0 = M, kw...)
@@ -513,30 +506,23 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
                             η = 0.001, η0 = 0.001, 
                             K0 = 10, K = 10, 
                             nhidden = 1000, depth = 2,
-                            σ = 1.0, # deprecated
-                            amsgrad = true, # deprecated
                             γ = 0.9, # deprecated
-                            max_norm = 2.0, clip_ratio = 1.0, # deprecated
                             decay_step = 5, # deprecated
                             patience = 100, patience0 = 100, disable_early_stopping = true, # deprecated
-                            debug_with_y0 = false, y0 = 0, # deprecated
                             nepoch0 = 100, nepoch = 100, 
                             λl = 1e-9, λu = 1e-4,
-                            use_torchsort = false,
-                            sort_reg_strength = 0.1,
+                            use_torchsort = false, sort_reg_strength = 0.1,
                             model_file = "model_G.pt",
                             gpu_id = 0,
                             niter_per_epoch = 100,
-                            step2_use_tensor = true, # deprecated
                             disable_tqdm = false,
                             kw...
                             )
     Ghat, LOSS = _py_boot."train_G_lambda"(Float32.(y), Float32.(B), Float32.(L), eta = η, K = K, 
                                             K0 = K0,
-                                            nepoch = nepoch, sigma = σ, amsgrad = amsgrad, 
+                                            nepoch = nepoch,
                                             gamma = γ, eta0 = η0, 
-                                            decay_step = decay_step, max_norm = max_norm, clip_ratio = clip_ratio, 
-                                            debug_with_y0 = debug_with_y0, y0 = Float32.(y0), 
+                                            decay_step = decay_step, 
                                             nepoch0 = nepoch0, 
                                             lam_lo = λl, lam_up = λu, 
                                             model_file = model_file,
@@ -544,7 +530,6 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
                                             gpu_id = gpu_id, 
                                             patience0 = patience0, patience=patience, disable_early_stopping = disable_early_stopping,
                                             niter_per_epoch = niter_per_epoch,
-                                            step2_use_tensor = step2_use_tensor,
                                             nhidden = nhidden, depth = depth,
                                             disable_tqdm = disable_tqdm)#::Tuple{PyObject, PyArray}
     #println(typeof(py_ret)) #Tuple{PyCall.PyObject, Matrix{Float32}} 

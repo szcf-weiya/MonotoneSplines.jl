@@ -32,27 +32,22 @@ class Model(nn.Module):
             beta, indices = torch.sort(beta_unsort)
         return beta
 
-def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100, 
-                    nhidden = 1000, eta = 0.001, eta0 = 0.0001, 
-                    gamma = 0.9, sigma = 1, amsgrad = False, 
-                    decay_step = 5, 
-                    max_norm = 2.0, clip_ratio = 1.0, 
-                    debug_with_y0 = False, y0 = 0, 
-                    nepoch0 = 100,
+def train_G_lambda(y, B, L, K = 10, K0 = 10, 
+                    eta = 0.001, eta0 = 0.0001, 
+                    nhidden = 1000, depth = 2, 
+                    nepoch = 100, nepoch0 = 100,
+                    niter_per_epoch = 100,
+                    gamma = 0.9, decay_step = 5, # TODO: how to proper set schedule? or just discard?
                     lam_lo = 1e-9, lam_up = 1e-4, use_torchsort = False, 
                     sort_reg_strength = 0.1, gpu_id = 0, 
-                    patience = 100, patience0 = 100, disable_early_stopping = True,
-                    depth = 2, 
+                    patience = 100, patience0 = 100, disable_early_stopping = True, # TODO: early stopping  
                     eval_sigma_adaptive = False, # if False, use `model0` to evaluate sigma
                     model_file = "model_G.pt", 
-                    step2_use_tensor = False,
-                    niter_per_epoch = 100,
+                    step2_use_tensor = True, amsgrad = True, # no need to modified
                     disable_tqdm = False):
     #
     device = f"cuda:{gpu_id}" if torch.cuda.is_available() and gpu_id != -1 else "cpu"
     y = torch.from_numpy(y[None, :]).to(device, non_blocking=True)
-    if debug_with_y0:
-        y0 = torch.from_numpy(y0[None, :]).to(device)
     B = torch.from_numpy(B).to(device, non_blocking=True)
     L = torch.from_numpy(L).to(device, non_blocking=True)
     n, J = B.size()
@@ -91,7 +86,6 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
             loss1 = loss1_fit + torch.mean(lams * torch.square(torch.matmul(betas, L))) * J / n
             opt1.zero_grad()
             loss1.backward()
-            # nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_norm)
             opt1.step()
             train_loss.append(loss1.item())
             pbar0.set_postfix(iter = ii, loss = loss1.item())
@@ -146,7 +140,7 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
                 yspred = torch.matmul(betas, B.t()) # K0 x K x n
                 #                               K0x1x1                           K0xKxJ JxJ
                 loss2 = loss_fn(yspred, ytrain) + torch.mean(lam.to(device) * torch.square(torch.matmul(betas, L))) * J / n
-            else:
+            else: # deprecated
                 loss2 = 0
                 for i in range(K0): # for each lam
                     lam = np.random.rand() * (lam_up - lam_lo) + lam_lo
@@ -171,8 +165,6 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10, nepoch = 100,
                 loss2 = loss2 / K0
             opt2.zero_grad()
             loss2.backward()
-            # nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_norm * clip_ratio)
-            # nn.utils.clip_grad_value_(model.parameters(), max_norm)
             opt2.step()
             # sch2.step()
             train_loss.append(loss2.item())
