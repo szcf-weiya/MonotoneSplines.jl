@@ -100,15 +100,15 @@ function predict(X::Vector{Float64}, y::Vector{Float64}, J::Int,
 end
 
 
-function cv_err(X, y, nfold = 10, J = 10)
+function cv_err(x::AbstractVector{T}, y::AbstractVector{T}; nfold = 10, J = 10) where T <: AbstractFloat
     n = length(y)
     folds = div_into_folds(n, K = nfold)
     err = zeros(nfold)
     for k = 1:nfold
         test_idx = folds[k]
         train_idx = setdiff(1:n, test_idx)
-        spl = fit(X[train_idx], y[train_idx], J, "monotone", "increasing")
-        yhat = predict(spl, X[test_idx])
+        spl = fit(x[train_idx], y[train_idx], J, "monotone", "increasing")
+        yhat = predict(spl, x[test_idx])
         err[k] = norm(yhat - y[test_idx])^2
     end
     return sum(err) / n

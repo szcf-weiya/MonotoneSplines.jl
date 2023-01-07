@@ -24,6 +24,11 @@ n = 20
 σ = 0.1
 x, y, x0, y0 = gen_data(n, σ, exp, seed = 1234);
 
+@testset "monotone fitting without smoothness penalty" begin
+    err = cv_err(x, y, nfold = 10, J = 10)
+    @test 0 <= err < σ
+end
+
 @testset "compare monotone fitting" begin
     λ = 1e-5;
     Ghat, loss = mono_ss_mlp(x, y, λl = λ, λu = λ, device = :cpu, disable_progressbar = true);
@@ -54,6 +59,10 @@ end
 end
 
 @testset "check confidence bands" begin
-    check_CI(nrep = 1, nepoch0 = 1, nepoch = 1, fig = false, check_acc = false, nB = 10, backend = "pytorch") 
-    check_CI(nrep = 1, nepoch0 = 1, nepoch = 1, fig = false, check_acc = false, nB = 10, backend = "flux") 
+    check_CI(nrep = 1, nepoch0 = 1, nepoch = 1, fig = false, check_acc = false, nB = 10, backend = "pytorch", prop_nknots = 0.2, nhidden = 100, niter_per_epoch = 2) 
+    check_CI(nrep = 1, nepoch0 = 1, nepoch = 1, fig = false, check_acc = false, nB = 10, backend = "flux", prop_nknots = 0.2, nhidden = 100, niter_per_epoch = 2, gpu_id = -1) 
+end
+
+@testset "confidence band width" begin
+    @test MonotoneSplines.conf_band_width([0 1; 0 3]) ≈ 2.0
 end
