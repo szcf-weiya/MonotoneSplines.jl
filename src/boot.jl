@@ -122,6 +122,7 @@ function check_CI(; n = 100, σ = 0.1, f = exp, seed = 1234,
                     LOSS = vcat(loss0, loss)
                 else # backend = "pytorch"
                     M = K
+                    model_file = "model-$f-$σ-n$n-J$J-nhidden$nhidden-$i-$seed-$timestamp.pt"
                     Ghat, LOSS = py_train_G_lambda(y,
                                                     B, L, K = M, nepoch = nepoch, η = η, 
                                                     K0 = K0,
@@ -130,7 +131,7 @@ function check_CI(; n = 100, σ = 0.1, f = exp, seed = 1234,
                                                     gpu_id = gpu_id,
                                                     nhidden = nhidden, depth = depth,
                                                     niter_per_epoch = niter_per_epoch, cooldown2 = cooldown2,
-                                                    model_file = "model-$f-$σ-n$n-J$J-nhidden$nhidden-$i-$seed-$timestamp.pt",
+                                                    model_file = model_file,
                                                     patience = patience, cooldown = cooldown,
                                                     decay_step = decay_step, 
                                                     nepoch0 = nepoch0, λl = λs[1], λu = λs[end])

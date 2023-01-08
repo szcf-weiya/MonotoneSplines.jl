@@ -11,18 +11,18 @@ jobs:
         os: [ubuntu-20.04, ubuntu-22.04]
         julia-version: ['1.8']
         python-version: ['3.8']
+        r-version: ['4.2.1']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v2
-      - name: Install R
-        run: |
-          sudo apt-get install lsb-release
-          sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys E298A3A825C0D65DFD57CBB651716619E084DAB9
-          sudo add-apt-repository "deb https://cloud.r-project.org/bin/linux/ubuntu $(lsb_release -c -s)-cran40/"
-          sudo apt update
-          sudo apt install r-base
-          sudo apt install libcurl4-openssl-dev
-
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: ${{ matrix.r-version }}
+      # actually it seems that without installing `libcurl4-openssl-dev`, there also exists a libcurl.so, but at `/lib/x86_64-linux-gnu/libcurl.so.4` instead of `/usr/lib/x86_64-linux-gnu/libcurl.so.4`
+      # for consistency with previous setting and also recommended at https://github.com/r-lib/actions/tree/v2/setup-r-dependencies, continue to install `libcurl4-openssl-dev`
+      - name: Install libcurl on Linux
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -y && sudo apt-get install -y libcurl4-openssl-dev
       - name: Install Dependencies for R
         run: |
           r = getOption("repos")
@@ -43,7 +43,6 @@ jobs:
       - uses: actions/setup-python@v2
         with:
           python-version: ${{ matrix.python-version }}
-          architecture: 'x64'
 
       # see also: https://stackoverflow.com/questions/8795617/how-to-pip-install-a-package-with-min-and-max-version-range
       # https://pip.pypa.io/en/stable/cli/pip_install/#examples
@@ -57,7 +56,8 @@ jobs:
       
       - uses: julia-actions/julia-runtest@v1
         env:
-          LD_PRELOAD: /usr/lib/x86_64-linux-gnu/libcurl.so.4 
+          LD_PRELOAD: /usr/lib/x86_64-linux-gnu/libcurl.so.4
+          LD_LIBRARY_PATH: /opt/R/${{ matrix.r-version }}/lib/R/lib
       - uses: julia-actions/julia-processcoverage@v1
       - uses: codecov/codecov-action@v3
         with:
@@ -67,5 +67,6 @@ jobs:
         if: ${{ matrix.os == 'ubuntu-20.04' && matrix.julia-version == '1.8' && matrix.python-version == '3.8' }} # only run docs in one env
         env:
           LD_PRELOAD: /usr/lib/x86_64-linux-gnu/libcurl.so.4 
+          LD_LIBRARY_PATH: /opt/R/${{ matrix.r-version }}/lib/R/lib
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # If authenticating with GitHub Actions token
           DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }} # If authenticating with SSH deploy key
