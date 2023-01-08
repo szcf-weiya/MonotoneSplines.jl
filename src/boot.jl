@@ -206,7 +206,7 @@ function check_CI(; n = 100, σ = 0.1, f = exp, seed = 1234,
         end                    
     end
     serialize("$f-n$n-σ$σ-nrep$nrep-B$nB-K$K-η$η-nepoch$nepoch-$timestamp.sil", [res_covprob, res_overlap, res_err, res_time, Err_boot])
-    return mean(res_overlap, dims=1)[1,:], mean(res_covprob, dims=1), mean(res_err, dims=1)[1,:,:], mean(res_time)
+    return mean(res_overlap, dims=1)[1,:], mean(res_covprob, dims=1), mean(res_err, dims=1)[1,:,:], mean(res_time), model_file
 end
 
 """
@@ -549,8 +549,14 @@ function load_model(B::Matrix, model_file::String; dim_lam = 8, gpu_id = 3)
     n = params["n"]
     J = params["J"]
     nhidden = params["nhidden"]
-    Ghat = _py_boot."load_model"(n, dim_lam, J, nhidden, model_file, gpu_id)
-    return (y, λ) -> B * py"$Ghat"(Float32.(vcat(y, aug(λ))))
+    if model_file[end-1:end] == "pt" # backend is pytorch
+        Ghat = _py_boot."load_model"(n, dim_lam, J, nhidden, model_file, gpu_id)
+        return (y, λ) -> B * py"$Ghat"(Float32.(vcat(y, aug(λ))))
+    else
+        device = ifelse(gpu_id == -1, cpu, gpu)
+        Ghat = BSON.load(model_file, @__MODULE__)[:G] # assume sort_in_nn
+        return (y, λ) -> B * cpu(device(Ghat)(device(vcat(y, aug(λ)))))
+    end
 end
 
 # adopt from https://github.com/szcf-weiya/Xfunc.jl/blob/0778903310bd9bc82880d55e640cd1888baaa599/src/str.jl#L31-L46

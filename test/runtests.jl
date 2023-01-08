@@ -25,7 +25,7 @@ n = 20
 x, y, x0, y0 = gen_data(n, σ, exp, seed = 1234);
 
 @testset "monotone fitting without smoothness penalty" begin
-    err = cv_err(x, y, nfold = 10, J = 10)
+    err = MonotoneSplines.cv_err(x, y, nfold = 10, J = 10)
     @test 0 <= err < σ
 end
 
@@ -59,10 +59,22 @@ end
 end
 
 @testset "check confidence bands" begin
-    check_CI(nrep = 1, nepoch0 = 1, nepoch = 1, fig = false, check_acc = false, nB = 10, backend = "pytorch", prop_nknots = 0.2, nhidden = 100, niter_per_epoch = 2) 
-    check_CI(nrep = 1, nepoch0 = 1, nepoch = 1, fig = false, check_acc = false, nB = 10, backend = "flux", prop_nknots = 0.2, nhidden = 100, niter_per_epoch = 2, gpu_id = -1) 
+    res1 = check_CI(nrep = 1, nepoch0 = 1, nepoch = 1, fig = false, check_acc = false, nB = 10, backend = "pytorch", prop_nknots = 0.2, nhidden = 100, niter_per_epoch = 2) 
+    res2 = check_CI(nrep = 1, fig = false, check_acc = false, nB = 10, model_file = res1[end], prop_nknots = 0.2) 
+    @test res1[3] ≈ res2[3] # res_err is not random like CI results
+    res3 = check_CI(nrep = 1, nepoch0 = 1, nepoch = 1, fig = false, check_acc = false, nB = 10, backend = "flux", prop_nknots = 0.2, nhidden = 100, niter_per_epoch = 2, gpu_id = -1) 
+    # with flux backend, both `**.bson` and `**_ci.bson` are saved, so if check_acc=false, use `_ci.bson`
+    res4 = check_CI(nrep = 1, fig = false, check_acc = false, nB = 10, model_file = res3[end][1:end-5] *"_ci.bson", prop_nknots = 0.2, gpu_id = -1) 
+    @test res3[3] ≈ res4[3]
 end
 
 @testset "confidence band width" begin
     @test MonotoneSplines.conf_band_width([0 1; 0 3]) ≈ 2.0
+end
+
+@testset "example functions" begin
+    @test isa(cubic, Function)
+    @test isa(logit, Function)
+    @test isa(logit5, Function)
+    @test isa(sinhalfpi, Function)
 end
