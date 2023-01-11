@@ -4,6 +4,7 @@ using JuMP
 using ECOS
 using Plots
 using StatsBase
+import RCall.rcopy
 
 OPTIMIZER = ECOS.Optimizer
 
@@ -21,6 +22,16 @@ mutable struct Spl{T <: AbstractFloat}
     β::AbstractVector{T}
 end
 
+"""
+    rcopy(s::Spl)
+
+Convert RObject `s.H` as a Julia matrix, and `s.β` keeps the same.
+"""
+function rcopy(s::Spl)
+    return rcopy(s.H), s.β
+end
+
+# deprecated? use mono_cs instead
 function monotone_spline(X, y, paras)
     return fit(X, y, paras, "monotone")
 end
@@ -145,6 +156,21 @@ function ci_mono_ss(x::AbstractVector, y::AbstractVector, λ = 1.0; ε = (eps())
     return yhat, YCI
 end
 
+"""
+    mono_cs(x::AbstractVector, y::AbstractVector, J::Int = 4; xnew = nothing)
+
+Monotone splines with cubic splines.
+"""
+function mono_cs(x::AbstractVector, y::AbstractVector, J::Int = 4; xnew = nothing)
+    B, Bnew, L, J = build_model(x, J, xnew = xnew)
+    return mono_ss(B, y, zeros(J, J), J)
+end
+
+"""
+    mono_ss(x::AbstractVector, y::AbstractVector, λ = 1.0; prop_nknots = 1.0)
+
+Monotone splines with smoothing splines.
+"""
 function mono_ss(x::AbstractVector, y::AbstractVector, λ = 1.0; ε = (eps())^(1/3), prop_nknots = 1.0)
     B, Bnew, L, J = build_model(x, true, prop_nknots = prop_nknots)
     return mono_ss(B, y, L, J, λ; ε = ε)
@@ -155,6 +181,12 @@ end
     mono_ss(B::AbstractMatrix, y::AbstractVector, L::AbstractMatrix, J::Int, λ::AbstractFloat)
 
 Monotone Fitting with Smoothing Splines given design matrix `B` and cholesky-decomposed matrix `L`.
+
+## Returns
+
+- `βhat`: estimated coefficient
+- `yhat`: fitted values
+- (optional) `B` and `L`
 """
 function mono_ss(B::AbstractMatrix, y::AbstractVector, L::AbstractMatrix, J::Int, λ = 1.0; ε = (eps())^(1/3))
     A = zeros(Int, J-1, J)

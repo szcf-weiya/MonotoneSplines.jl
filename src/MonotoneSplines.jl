@@ -31,12 +31,14 @@ export check_CI,
         logit,
         logit5,
         sinhalfpi,
+        mono_cs,
         mono_ss,
         mono_ss_mlp,
         ci_mono_ss,
         ci_mono_ss_mlp,
         gen_data,
-        jaccard_index
+        jaccard_index,
+        rcopy
 
 if Base.VERSION >= v"1.4.2"
     include("precompile.jl")

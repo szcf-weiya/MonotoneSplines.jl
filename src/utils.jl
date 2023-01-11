@@ -123,7 +123,7 @@ Construct design matrix and other internal variables for cubic spline with `J` b
 - `L = nothing`: keep same return list for model of smoothing splines
 - `J`: number of basis functions, which does not change for cubic splines, so it is only intended for smoothing splines 
 """
-function build_model(x::AbstractVector{T}, J::Int; xboundary = nothing, xnew = nothing, ε = (eps())^(1/3)) where T <: AbstractFloat
+function build_model(x::AbstractVector{T}, J::Int; xboundary = nothing, xnew = nothing) where T <: AbstractFloat
     Bnew = nothing
     if isnothing(xboundary)
         xboundary = [minimum(x), maximum(x)]
@@ -155,7 +155,7 @@ Construct design matrix and other internal variables for smoothing spline. If `s
 
 - B-spline design matrix `B` at `x` for cubic splines
 - `Bnew` at new points `xnew` if it is not `nothing`
-- `L = nothing`: keep same return list for model of smoothing splines
+- `L = nothing`: keep same return list for model of smoothing splines, Ω = LL'
 - `J`: number of basis functions, which does not change for cubic splines, so it is only intended for smoothing splines 
 
 the above four are shared with the method for cubic splines, but for smoothing splines, it also returns 

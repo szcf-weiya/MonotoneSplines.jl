@@ -24,6 +24,14 @@ n = 20
 σ = 0.1
 x, y, x0, y0 = gen_data(n, σ, exp, seed = 1234);
 
+@testset "monotone splines with cubic splines" begin
+    βhat, yhat, B = mono_cs(x, y, 4)
+    spl = MonotoneSplines.monotone_spline(x, y, 4)
+    H, βhat2 = rcopy(spl)
+    @test βhat ≈ βhat2 atol=1e-3
+    @test B ≈ H atol=1e-3
+end
+
 @testset "monotone fitting without smoothness penalty" begin
     err = MonotoneSplines.cv_err(x, y, nfold = 10, J = 10)
     @test 0 <= err < σ
