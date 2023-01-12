@@ -214,7 +214,7 @@ end
 function build_model(x::AbstractVector{T}; J = 10, xboundary = nothing, t = nothing, xnew = nothing, ε = (eps())^(1/3), all_knots = false, λ = nothing) where T <: AbstractFloat
     # t is the threshold, and λ is the corresponding Lagrange multipler
     if isnothing(t) & isnothing(λ)
-        return build_model(x, J, xboundary = xboundary, xnew = xnew, ε = ε)
+        return build_model(x, J, xboundary = xboundary, xnew = xnew)
     else
         # to agree with old code, if t is given instead of lambda, scaled = false
         return build_model(x, !isnothing(λ), xboundary = xboundary, all_knots = all_knots, xnew = xnew, ε = ε)
