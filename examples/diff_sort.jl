@@ -10,7 +10,7 @@ using Plots
 # First of all, generate data $y = \exp(x) + ϵ$,
 n = 20
 σ = 0.1
-x, y, x0, y0 = gen_data(n, σ, exp, seed = 1234);
+x, y, x0, y0 = MonotoneSplines.gen_data(n, σ, exp, seed = 1234);
 
 # Here we train a MLP network $G(\lambda = λ_0)$ to approximate the solution $\hat\gamma_{\lambda_0}$ for a single $\lambda$.
 λl = 1e-2

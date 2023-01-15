@@ -36,7 +36,6 @@ export check_CI,
         mono_ss_mlp,
         ci_mono_ss,
         ci_mono_ss_mlp,
-        gen_data,
         jaccard_index,
         rcopy
 

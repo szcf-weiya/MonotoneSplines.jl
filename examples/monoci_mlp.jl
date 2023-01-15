@@ -5,7 +5,7 @@ using Plots
 # Firstly, we generate data from $y=\exp(x)+N(0, 0.1^2)$,
 n = 20
 σ = 0.1
-x, y, x0, y0 = gen_data(n, σ, exp, seed = 1234);
+x, y, x0, y0 = MonotoneSplines.gen_data(n, σ, exp, seed = 1234);
 
 # Consider $\lambda \in [\lambda_l, \lambda_u]$,
 λl = 1e-2
