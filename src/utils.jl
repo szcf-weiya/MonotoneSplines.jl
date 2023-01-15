@@ -58,7 +58,7 @@ Partial code for picking knots in R's `smooth.spline`.
 The source code of `smooth.spline` can be directly accessed via typing `smooth.spline` is an R session. Note that there might be some differences in different R versions. The code is adapted based on R 3.6.3.
 """
 # refer to `smooth.spline`
-function pick_knots(x::AbstractVector{T}; tol = 1e-6 * iqr(x), all_knots = false, scaled = false, prop_nknots = 1.0) where T <: AbstractFloat
+function pick_knots(x::AbstractVector{T}; tol = 1e-6 * iqr(x), all_knots = false, prop_nknots = 1.0) where T <: AbstractFloat
     xx = round.(Int, (x .- mean(x)) / tol )
     # https://stackoverflow.com/questions/50899973/indices-of-unique-elements-of-vector-in-julia
     # unique index (Noted in techNotes)
@@ -73,15 +73,10 @@ function pick_knots(x::AbstractVector{T}; tol = 1e-6 * iqr(x), all_knots = false
     end
     nknots = max(4, nknots)
     idx = round.(Int, range(1, nx, length = nknots))
-    if scaled
-        rx = (ux[end] - ux[1])
-        mx = ux[1]
-        ux = (ux .- mx) ./ rx
-        return ux[idx], mx, rx, (1:length(x))[ud][idx0][idx], (1:length(x))[ud][idx0]
-    else
-        # to keep the same output
-        return ux[idx], nothing, nothing, nothing, nothing 
-    end
+    rx = (ux[end] - ux[1])
+    mx = ux[1]
+    ux = (ux .- mx) ./ rx
+    return ux[idx], mx, rx, (1:length(x))[ud][idx0][idx], (1:length(x))[ud][idx0]
 end
 
 """
@@ -111,42 +106,25 @@ end
 
 Construct design matrix and other internal variables for cubic spline with `J` basis functions.
 
-## Arguments
-
-- `xboundary = nothing`: the boundary of `x`, if `nothing`, set it to be `[min_x, max_x]`.
-- `xnew = nothing`: evaluate B-spline design matrix on `xnew` if not nothing.
-
 ## Returns
 
-- B-spline design matrix `B` at `x` for cubic splines
-- `Bnew` at new points `xnew` if it is not `nothing`
-- `L = nothing`: keep same return list for model of smoothing splines
-- `J`: number of basis functions, which does not change for cubic splines, so it is only intended for smoothing splines 
+- `B`: B-spline design matrix `B` at `x` for cubic splines
+- `rB`: raw RObject of `B`
 """
-function build_model(x::AbstractVector{T}, J::Int; xboundary = nothing, xnew = nothing) where T <: AbstractFloat
-    Bnew = nothing
-    if isnothing(xboundary)
-        xboundary = [minimum(x), maximum(x)]
-    end
-    rB = R"splines::bs($x, df=$J, intercept=TRUE, Boundary.knots = $xboundary)" # needed for evaluating xnew
+function build_model(x::AbstractVector{T}, J::Int) where T <: AbstractFloat
+    rB = R"splines::bs($x, df=$J, intercept=TRUE)" 
     B = rcopy(rB)
-    if !isnothing(xnew)
-        Bnew = rcopy(R"predict($rB, $xnew)")
-    end
-    L = nothing
-    return B, Bnew, L, J
+    return B, rB
 end
 
 # smoothing splines
 """
-    build_model(x::AbstractVector{T}, scaled::Bool; <keyword arguments>)
+    build_model(x::AbstractVector{T}; <keyword arguments>)
 
-Construct design matrix and other internal variables for smoothing spline. If `scaled`, `x` is scaled to `[0, 1]`.
+Construct design matrix and other internal variables for smoothing spline.
 
 ## Arguments
 
-- `xboundary = nothing`: the boundary of `x`, if `nothing`, set it to be `[min_x, max_x]`.
-- `xnew = nothing`: evaluate B-spline design matrix on `xnew` if not nothing.
 - `all_knots = false`: whether to use all knots. If `false`, use the same rule as in R's `smooth.spline`.
 - `prop_nknots = 1.0`: a proportion for using fewer knots. Suppose the number of knots is `nknots`, then the final number of knots is `prop_nknots` * `nknots`. Currently, it is only effective when `all_knots = false`.
 - `ε = 6.06e-6`: a small number added to the diagonal of matrix Ω to ensure it is positive definite.
@@ -154,46 +132,25 @@ Construct design matrix and other internal variables for smoothing spline. If `s
 ## Returns
 
 - B-spline design matrix `B` at `x` for cubic splines
-- `Bnew` at new points `xnew` if it is not `nothing`
-- `L = nothing`: keep same return list for model of smoothing splines, Ω = LL'
+- `L`: cholesky decomposition of Ω = LL'
 - `J`: number of basis functions, which does not change for cubic splines, so it is only intended for smoothing splines 
 
 the above four are shared with the method for cubic splines, but for smoothing splines, it also returns 
 
 - `mx, rx, idx, idx0`: only for smoothing splines
 """
-function build_model(x::AbstractVector{T}, scaled::Bool; xboundary = nothing, all_knots = false, xnew = nothing, ε = (eps())^(1/3), prop_nknots = 1.0) where T <: AbstractFloat
-    Bnew = nothing
-    knots, mx, rx, idx, idx0 = pick_knots(ifelse(isnothing(xboundary), x, vcat(x, xboundary)), all_knots = all_knots, scaled = scaled, prop_nknots = prop_nknots)
+function build_model(x::AbstractVector{T}; all_knots = false, ε = (eps())^(1/3), prop_nknots = 1.0) where T <: AbstractFloat
+    knots, mx, rx, idx, idx0 = pick_knots(x, all_knots = all_knots, prop_nknots = prop_nknots)
     bbasis = R"fda::create.bspline.basis(breaks = $knots, norder = 4)"
     Ω = rcopy(R"fda::eval.penalty($bbasis, 2)")
     # Ω = (Ω + Ω') / 2
     # correct the diagonal
     Ω += ε * 1.0I
-    if scaled
-        xbar = (x .- mx) ./ rx
-        # see https://github.com/szcf-weiya/Clouds/issues/99#issuecomment-1272015742
-        xbar[xbar .< 0] .= 0
-        xbar[xbar .> 1] .= 1
-        B = rcopy(R"fda::eval.basis($xbar, $bbasis)")
-    else
-        B = rcopy(R"fda::eval.basis($x, $bbasis)")
-    end
-    if !isnothing(xnew)
-        if scaled
-            xnewbar = (xnew .- mx) ./ rx
-            # see https://github.com/szcf-weiya/Clouds/issues/99#issuecomment-1272015742
-            xnewbar[xnewbar .< 0] .= 0
-            xnewbar[xnewbar .> 1] .= 1
-            # Bnew = rcopy(R"predict($bbasis, $xnewbar)")
-            # force to extrapolation
-            # Bnew = rcopy(R"splines::bs($xnewbar, intercept = TRUE, knots=$(knots[2:end-1]), Boundary.knots = $(knots[[1,end]]))")
-            # automatically set boundary points as the range
-            Bnew = rcopy(R"splines::bs($xnewbar, intercept = TRUE, knots=$(knots[2:end-1]))")
-        else
-            Bnew = rcopy(R"predict($bbasis, $xnew)") # no need to specify `fda::`
-        end
-    end
+    xbar = (x .- mx) ./ rx
+    # see https://github.com/szcf-weiya/Clouds/issues/99#issuecomment-1272015742
+    xbar[xbar .< 0] .= 0
+    xbar[xbar .> 1] .= 1
+    B = rcopy(R"fda::eval.basis($xbar, $bbasis)")
     J = length(knots) + 2
     L = nothing
     try
@@ -203,22 +160,7 @@ function build_model(x::AbstractVector{T}, scaled::Bool; xboundary = nothing, al
         ## perform pivoted Cholesky
         L = Matrix(cholesky(Symmetric(Ω), Val(true), check = false, tol = ε).L)
     end
-    return B, Bnew, L, J, mx, rx, idx, idx0
-end
-
-"""
-    build_model(x::AbstractVector{T}; λ, t)
-
-(deprecated) An unified function for constructing design matrix and other internal variables. It is cubic spline if both smoothness parameter `λ` and its corresponding threshold `t` are nothing, otherwise it is smoothing spline.
-"""
-function build_model(x::AbstractVector{T}; J = 10, xboundary = nothing, t = nothing, xnew = nothing, ε = (eps())^(1/3), all_knots = false, λ = nothing) where T <: AbstractFloat
-    # t is the threshold, and λ is the corresponding Lagrange multipler
-    if isnothing(t) & isnothing(λ)
-        return build_model(x, J, xboundary = xboundary, xnew = xnew)
-    else
-        # to agree with old code, if t is given instead of lambda, scaled = false
-        return build_model(x, !isnothing(λ), xboundary = xboundary, all_knots = all_knots, xnew = xnew, ε = ε)
-    end
+    return B, L, J, mx, rx, idx, idx0
 end
 
 """

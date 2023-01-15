@@ -88,7 +88,10 @@ end
 Make prediction based on fitted `Spl` on new points `xs`. If `Xnew` is provided, then also returns the prediction error `‖yhat - ynew‖_2^2`.
 """
 function predict(model::Spl{T}, xs::AbstractVector{T}) where T <: AbstractFloat
-    return rcopy(R"predict($(model.H), $xs)") * model.β
+    # the warning evaluated at outside point can be safely ignored since
+    # the extrapolation of the function is the linear combinations of the extrapolation of each basis function
+    # NB: it is different from smoothing splines, whose extrapolation is linear. (Clouds#85)
+    return rcopy(R"suppressWarnings(predict($(model.H), $xs))") * model.β
 end
 
 function predict(X::Vector{Float64}, y::Vector{Float64}, J::Int,
@@ -161,8 +164,8 @@ end
 
 Monotone splines with cubic splines.
 """
-function mono_cs(x::AbstractVector, y::AbstractVector, J::Int = 4; xnew = nothing)
-    B, Bnew, L, J = build_model(x, J, xnew = xnew)
+function mono_cs(x::AbstractVector, y::AbstractVector, J::Int = 4)
+    B, _ = build_model(x, J)
     return mono_ss(B, y, zeros(J, J), J)
 end
 
@@ -172,7 +175,7 @@ end
 Monotone splines with smoothing splines.
 """
 function mono_ss(x::AbstractVector, y::AbstractVector, λ = 1.0; ε = (eps())^(1/3), prop_nknots = 1.0)
-    B, Bnew, L, J = build_model(x, true, prop_nknots = prop_nknots)
+    B, L, J = build_model(x, prop_nknots = prop_nknots)
     return mono_ss(B, y, L, J, λ; ε = ε)
 end
 
@@ -223,7 +226,7 @@ end
 Cross-validation for monotone fitting with smoothing spline on `y ~ x` among parameters `λs`.
 """
 function cv_mono_ss(x::AbstractVector{T}, y::AbstractVector{T}, λs = exp.(-6:0.5:1); ε = (eps())^(1/3), nfold = 10) where T <: AbstractFloat
-    B, Bnew, L, J = build_model(x, true)
+    B, L, J = build_model(x)
     n = length(y)
     folds = div_into_folds(n, K = nfold, seed = -1)
     nλ = length(λs)

@@ -93,7 +93,7 @@ function check_CI(; n = 100, σ = 0.1, f = exp, seed = 1234,
             # x = rand(n) * 2 .- 1
             # y = f.(x) + randn(n) * σ    
         end
-        B, Bnew, L, J = build_model(x, true, prop_nknots = prop_nknots)
+        B, L, J = build_model(x, prop_nknots = prop_nknots)
         ## optimization solution for monotone splines
         res_time[i, 1] = @elapsed for (j, λ) in enumerate(λs)
             βhat0, yhat0 = mono_ss(x, y, λ, prop_nknots = prop_nknots)
@@ -380,7 +380,7 @@ function mono_ss_mlp(x::AbstractVector, y::AbstractVector; prop_nknots = 0.2,
                                                         nhidden = 100,
                                                         disable_progressbar = false, # for pytorch backend (see #2)
                                                         kw...)
-    B, Bnew, L, J = build_model(x, true, prop_nknots = prop_nknots)
+    B, L, J = build_model(x, prop_nknots = prop_nknots)
     if backend == "flux"
         Ghat, LOSS = train_Gλ(y, B, L; λl = λl, λu = λu, device = device, nhidden = nhidden, disable_progressbar = disable_progressbar, kw...)
     else
@@ -424,7 +424,7 @@ function ci_mono_ss_mlp(x::AbstractVector{T}, y::AbstractVector{T}, λs::Abstrac
                                                                         disable_progressbar = false,
                                                                         sort_in_nn = true, eval_in_batch = false, # only Flux
                                                                         device = :cpu, kw...) where T <: AbstractFloat
-    B, Bnew, L, J = build_model(x, true, prop_nknots = prop_nknots)
+    B, L, J = build_model(x, prop_nknots = prop_nknots)
     model_file *= ifelse(backend == "flux", ".bson", ".pt")
     λl = minimum(λs)
     λu = maximum(λs)
