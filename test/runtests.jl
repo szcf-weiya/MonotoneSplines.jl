@@ -25,11 +25,19 @@ n = 20
 x, y, x0, y0 = MonotoneSplines.gen_data(n, σ, exp, seed = 1234);
 
 @testset "monotone splines with cubic splines" begin
-    βhat, yhat, B = mono_cs(x, y, 4)
+    res = mono_cs(x, y, 4)
     spl = MonotoneSplines.monotone_spline(x, y, 4)
     H, βhat2 = rcopy(spl)
-    @test βhat ≈ βhat2 atol=1e-3
-    @test B ≈ H atol=1e-3
+    @test res.β ≈ βhat2 atol=1e-3
+    @test res.B ≈ H atol=1e-3
+    y0hat = predict(res, x0)
+    @test length(y0hat) == length(y0)
+end
+
+@testset "monotone splines with smoothing splines" begin
+    res = mono_ss(x, y, 1e-3)
+    y0hat = predict(res, x0)
+    @test length(y0hat) == length(y0)
 end
 
 @testset "monotone fitting without smoothness penalty" begin
@@ -45,7 +53,7 @@ end
     @test isa(Ghat2, Function)
     yhat = Ghat(y, λ);
     yhat2 = Ghat2(y, λ);
-    βhat0, yhat0 = mono_ss(x, y, λ, prop_nknots = 0.2);
+    yhat0 = mono_ss(x, y, λ, prop_nknots = 0.2).fitted;
     @test sum((yhat - yhat0).^2) / n < 1e-3
     @test sum((yhat2 - yhat0).^2) / n < 1e-3
 end

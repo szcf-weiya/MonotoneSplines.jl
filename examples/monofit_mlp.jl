@@ -42,7 +42,7 @@ yhat = Ghat(y, λ);
 yhat2 = Ghat2(y, λ);
 
 # compare it with the optimization solution
-βhat0, yhat0 = mono_ss(x, y, λ, prop_nknots = 0.2);
+yhat0 = mono_ss(x, y, λ, prop_nknots = 0.2).fitted;
 
 # plot the fitted curves
 scatter(x, y, label = "")
@@ -66,9 +66,9 @@ plot(loss)
 yhat_l = Ghat(y, λl)
 yhat_u = Ghat(y, λu)
 yhat_m = Ghat(y, λm)
-_, yhat0_l = mono_ss(x, y, λl, prop_nknots = 0.2);
-_, yhat0_u = mono_ss(x, y, λu, prop_nknots = 0.2);
-_, yhat0_m = mono_ss(x, y, λm, prop_nknots = 0.2);
+yhat0_l = mono_ss(x, y, λl, prop_nknots = 0.2).fitted;
+yhat0_u = mono_ss(x, y, λu, prop_nknots = 0.2).fitted;
+yhat0_m = mono_ss(x, y, λm, prop_nknots = 0.2).fitted;
 
 # Plot the fitting curves
 scatter(x, y, label = "")

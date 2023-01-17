@@ -151,6 +151,8 @@ function build_model(x::AbstractVector{T}; all_knots = false, ε = (eps())^(1/3)
     xbar[xbar .< 0] .= 0
     xbar[xbar .> 1] .= 1
     B = rcopy(R"fda::eval.basis($xbar, $bbasis)")
+    Bend = rcopy(R"fda::eval.basis(c(0, 1), $bbasis)")
+    Bendd = rcopy(R"fda::eval.basis(c(0, 1), $bbasis, Lfdobj=1)")
     J = length(knots) + 2
     L = nothing
     try
@@ -160,7 +162,7 @@ function build_model(x::AbstractVector{T}; all_knots = false, ε = (eps())^(1/3)
         ## perform pivoted Cholesky
         L = Matrix(cholesky(Symmetric(Ω), Val(true), check = false, tol = ε).L)
     end
-    return B, L, J, mx, rx, idx, idx0
+    return B, L, J, mx, rx, idx, idx0, Bend, Bendd, knots
 end
 
 """

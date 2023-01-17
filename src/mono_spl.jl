@@ -4,6 +4,7 @@ using JuMP
 using ECOS
 using Plots
 using StatsBase
+import StatsBase.predict
 import RCall.rcopy
 
 OPTIMIZER = ECOS.Optimizer
@@ -20,6 +21,24 @@ mutable struct Spl{T <: AbstractFloat}
     # H::Matrix{T}
     H::RObject{RealSxp}
     β::AbstractVector{T}
+end
+
+mutable struct MonotoneCS
+    B::AbstractMatrix{Float64}
+    rB::RObject
+    β::AbstractVector{Float64}
+    fitted::AbstractVector{Float64}
+end
+
+mutable struct MonotoneSS
+    mx::Real
+    rx::Real
+    knots::AbstractVector{Float64}
+    B::AbstractMatrix{Float64}
+    Bend::AbstractMatrix{Float64}
+    Bendd::AbstractMatrix{Float64}
+    β::AbstractVector{Float64}
+    fitted::AbstractVector{Float64}
 end
 
 """
@@ -78,6 +97,30 @@ function fit(X::AbstractVector, y::AbstractVector, paras, method = "monotone", t
     β[flag_missing] .= 0
     # return H, β
     return Spl(H, Float64.(β))
+end
+
+"""
+    smooth_spline(x::AbstractVector, y::AbstractVector, xnew::AbstractVector)
+
+Perform smoothing spline on `(x, y)`, and make predictions on `xnew`.
+
+Returns: `yhat`, `ynewhat`,....
+"""
+function smooth_spline(x::AbstractVector{T}, y::AbstractVector{T}, xnew::AbstractVector{T}; keep_stuff = false, design_matrix = false) where T <: AbstractFloat
+    spl = R"smooth.spline($x, $y, keep.stuff = $keep_stuff)"
+    Σ = nothing
+    if keep_stuff
+        Σ = recover(rcopy(R"$spl$auxM$Sigma"))
+    end
+    B = nothing
+    if design_matrix
+        knots = rcopy(R"$spl$fit$knot")[4:end-3]
+        bbasis = R"fda::create.bspline.basis(breaks = $knots, norder = 4)"
+        B = rcopy(R"predict($bbasis, $knots)")
+    end
+    λ = rcopy(R"$spl$lambda")
+    coef = rcopy(R"$spl$fit$coef")
+    return rcopy(R"predict($spl, $x)$y"), rcopy(R"predict($spl, $xnew)$y"), Σ, λ, spl, B, coef
 end
 
 """
@@ -146,14 +189,13 @@ end
 function ci_mono_ss(x::AbstractVector, y::AbstractVector, λ = 1.0; ε = (eps())^(1/3), 
                                                                    prop_nknots = 1.0, B = 1000,
                                                                    α = 0.05)
-    βhat, yhat = mono_ss(x, y, λ; ε = ε, prop_nknots = prop_nknots)
+    yhat = mono_ss(x, y, λ; ε = ε, prop_nknots = prop_nknots).fitted
     σhat = std(y - yhat)
     n = length(y)
     Yhat = zeros(n, B)
     for b = 1:B
         ystar = yhat + randn(n) * σhat
-        βstar_hat, ystar_hat = mono_ss(x, ystar, λ; ε = ε, prop_nknots = prop_nknots)
-        Yhat[:, b] = ystar_hat
+        Yhat[:, b] = mono_ss(x, ystar, λ; ε = ε, prop_nknots = prop_nknots).fitted
     end
     YCI = hcat([quantile(t, [α/2, 1-α/2]) for t in eachrow(Yhat)]...)'
     return yhat, YCI
@@ -165,8 +207,9 @@ end
 Monotone splines with cubic splines.
 """
 function mono_cs(x::AbstractVector, y::AbstractVector, J::Int = 4)
-    B, _ = build_model(x, J)
-    return mono_ss(B, y, zeros(J, J), J)
+    B, rB = build_model(x, J)
+    βhat, yhat = mono_ss(B, y, zeros(J, J), J)
+    return MonotoneCS(B, rB, βhat, yhat)
 end
 
 """
@@ -175,8 +218,36 @@ end
 Monotone splines with smoothing splines.
 """
 function mono_ss(x::AbstractVector, y::AbstractVector, λ = 1.0; ε = (eps())^(1/3), prop_nknots = 1.0)
-    B, L, J = build_model(x, prop_nknots = prop_nknots)
-    return mono_ss(B, y, L, J, λ; ε = ε)
+    B, L, J, mx, rx, idx, idx0, Bend, Bendd, knots = build_model(x, prop_nknots = prop_nknots)
+    βhat, yhat = mono_ss(B, y, L, J, λ; ε = ε)
+    return MonotoneSS(mx, rx, knots, B, Bend, Bendd, βhat, yhat)
+end
+
+function predict(W::MonotoneCS, xnew::AbstractVector)
+    Bnew = rcopy(R"suppressWarnings(predict($(W.rB), $xnew))")
+    return Bnew * W.β
+end
+
+function predict(W::MonotoneSS, xnew::AbstractVector)
+    xnewbar = (xnew .- W.mx) ./ W.rx
+    ind_right = xnewbar .> 1
+    ind_left = xnewbar .< 0
+    ind_middle = 0 .<= xnewbar .<= 1
+    xm = xnewbar[ind_middle]
+    n = length(xnew)
+    if sum(ind_middle) == 0
+        Bnew = zeros(0, W.J)
+    else
+        # xm cannot be empty
+        Bnew = rcopy(R"splines::bs($xm, intercept = TRUE, knots=$(W.knots[2:end-1]))")
+    end
+    yhat = zeros(n)
+    yhat[ind_middle] = Bnew * W.β
+    boundaries = W.Bend * W.β
+    slopes = W.Bendd * W.β
+    yhat[ind_left] = boundaries[1] .+ slopes[1] * (xnewbar[ind_left] .- 0)
+    yhat[ind_right] = boundaries[2] .+ slopes[2] * (xnewbar[ind_right] .- 1)
+    return yhat
 end
 
 # shared B

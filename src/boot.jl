@@ -96,8 +96,7 @@ function check_CI(; n = 100, σ = 0.1, f = exp, seed = 1234,
         B, L, J = build_model(x, prop_nknots = prop_nknots)
         ## optimization solution for monotone splines
         res_time[i, 1] = @elapsed for (j, λ) in enumerate(λs)
-            βhat0, yhat0 = mono_ss(x, y, λ, prop_nknots = prop_nknots)
-            Yhat0[j, :] = yhat0
+            Yhat0[j, :] = mono_ss(x, y, λ, prop_nknots = prop_nknots).fitted
         end
         ## train MLP generator
         res_time[i, 2] = @elapsed begin

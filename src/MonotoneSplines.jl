@@ -37,7 +37,8 @@ export check_CI,
         ci_mono_ss,
         ci_mono_ss_mlp,
         jaccard_index,
-        rcopy
+        rcopy,
+        predict
 
 if Base.VERSION >= v"1.4.2"
     include("precompile.jl")

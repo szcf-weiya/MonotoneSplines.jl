@@ -24,10 +24,12 @@ idx = argmin(errs)
 λopt = λs[idx]
 
 # Fit with `λopt`
-βhat = MonotoneSplines.mono_ss(B, y, L, J, λopt);
+βhat, yhat = MonotoneSplines.mono_ss(B, y, L, J, λopt);
 
 # Alternatively,
-βhat, yhat = MonotoneSplines.mono_ss(x, y, λopt);
+res = MonotoneSplines.mono_ss(x, y, λopt);
+yhat = res.fitted
+βhat = res.β
 
 # Plot it
 scatter(x, y)
@@ -49,7 +51,7 @@ function demo_mono_ss(x, y, λs)
     fig1 = plot(log.(λs), errs, xlab = "λ", ylab = "CV error", legend=false)
     λopt = λs[argmin(errs)]
     λ_mono_ss = [round(λopt, sigdigits = 4), round(log(λopt), sigdigits=4)]
-    βhat, yhat = MonotoneSplines.mono_ss(x, y, λopt)
+    yhat = MonotoneSplines.mono_ss(x, y, λopt).fitted
     fig2 = scatter(x, y, label = "obs.")
     scatter!(fig2, x, yhat, label = "mono_ss (λ = $(λ_mono_ss[1]), logλ = $(λ_mono_ss[2]))")
     ## ss
