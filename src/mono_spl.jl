@@ -37,6 +37,7 @@ mutable struct MonotoneSS
     B::AbstractMatrix{Float64}
     Bend::AbstractMatrix{Float64}
     Bendd::AbstractMatrix{Float64}
+    L::AbstractMatrix{Float64}
     β::AbstractVector{Float64}
     fitted::AbstractVector{Float64}
 end
@@ -137,26 +138,6 @@ function predict(model::Spl{T}, xs::AbstractVector{T}) where T <: AbstractFloat
     return rcopy(R"suppressWarnings(predict($(model.H), $xs))") * model.β
 end
 
-function predict(X::Vector{Float64}, y::Vector{Float64}, J::Int,
-                 Xnew::AbstractVector{Float64}, ynew::AbstractVector{Float64}, method = "monotone", tol = 1e-6)
-    model = fit(X, y, J, method)
-    H, β = model.H, model.β
-    yhat = predict(model, Xnew)
-    return yhat, sum((yhat - ynew) .^2), sum(abs.(β[1:J-1] - β[2:J]) .< tol) # number of equal pairs
-end
-function predict(X::Vector{Float64}, y::Vector{Float64}, J::Int,
-                 Xnew::Vector{Float64}, ynew::Vector{Float64}, σ::Vector{Float64}, method = "monotone", xgrid = nothing)
-    model = fit(X, y, J, method)
-    yhat = predict(model, Xnew)
-    if isnothing(xgrid)
-        return yhat, sum(((yhat - ynew) ./σ) .^2)
-    else
-        ygrid = predict(model, xgrid)
-        return yhat, sum(((yhat - ynew) ./σ) .^2), ygrid
-    end
-end
-
-
 function cv_err(x::AbstractVector{T}, y::AbstractVector{T}; nfold = 10, J = 10) where T <: AbstractFloat
     n = length(y)
     folds = div_into_folds(n, K = nfold)
@@ -215,12 +196,12 @@ end
 """
     mono_ss(x::AbstractVector, y::AbstractVector, λ = 1.0; prop_nknots = 1.0)
 
-Monotone splines with smoothing splines.
+Monotone splines with smoothing splines, return a `MonotoneSS` object.
 """
 function mono_ss(x::AbstractVector, y::AbstractVector, λ = 1.0; ε = (eps())^(1/3), prop_nknots = 1.0)
     B, L, J, mx, rx, idx, idx0, Bend, Bendd, knots = build_model(x, prop_nknots = prop_nknots)
     βhat, yhat = mono_ss(B, y, L, J, λ; ε = ε)
-    return MonotoneSS(mx, rx, knots, B, Bend, Bendd, βhat, yhat)
+    return MonotoneSS(mx, rx, knots, B, Bend, Bendd, L, βhat, yhat)
 end
 
 function predict(W::MonotoneCS, xnew::AbstractVector)
