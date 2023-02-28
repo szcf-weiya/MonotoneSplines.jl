@@ -96,3 +96,22 @@ end
     @test isa(logit5, Function)
     @test isa(sinhalfpi, Function)
 end
+
+@testset "check derivative of Bspline" begin
+    n = 20
+    x = rand(n)
+    knots = 0:0.1:1.0 # keep same gap between knots
+    J = length(knots) + 2
+    extended_knots = vcat(zeros(3), knots, ones(3))
+    # ξ(j+m-1) - ξ(j) # NB: the interval is not a constant
+    δξ = extended_knots[2+3:J+3] - extended_knots[2:J]
+    bbasis = R"fda::create.bspline.basis(breaks = $knots, norder = 4)" 
+    dbbasis = R"fda::create.bspline.basis(breaks = $knots, norder = 3)" 
+    B = rcopy(R"fda::eval.basis($x, $bbasis)")
+    β = randn(size(B, 2))
+    dB = rcopy(R"fda::eval.basis($x, $bbasis, Lfdobj=1)")
+    dB2 = rcopy(R"fda::eval.basis($x, $dbbasis)")
+    d1 = dB * β
+    d2 = dB2 * ((β[2:end] - β[1:end-1]) ./ δξ) * 3
+    @assert d1 ≈ d2
+end
