@@ -20,9 +20,10 @@ Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+RCall = "6f49c342-dc21-5d91-9882-a32aef131414"
 
 [targets]
-test = ["Test"]
+test = ["Test", "RCall"]
 
 [compat]
 BSON = "0.3"

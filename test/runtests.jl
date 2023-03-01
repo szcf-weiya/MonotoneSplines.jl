@@ -1,5 +1,6 @@
 using Test
 using MonotoneSplines
+using RCall
 
 @testset "Jaccard Index" begin
     @test jaccard_index([0, 1], [0, 1]) ≈ 1
@@ -114,4 +115,17 @@ end
     d1 = dB * β
     d2 = dB2 * ((β[2:end] - β[1:end-1]) ./ δξ) * 3
     @assert d1 ≈ d2
+end
+
+@testset "check solution" begin
+    x = 0:0.1:1.0
+    y = x.^3
+    res = mono_cs(x, y, 5) # borrow B
+    β0 = [0.1, 0.2, 0.2, 0.4, 0.5]
+    y0 = res.B * β0 + randn(length(x)) * 0.01 #NB: need to make sure res0.β indeed have β2 = β3, so larger noise might let the solution change dramatically
+    res0 = mono_cs(x, y0, 5)
+    β1 = G' * inv(G * res.B' * res.B * G') * G * res.B' * y0
+    if abs(res.β0[3] - res.β0[2]) < cbrt(eps()) # make sure the active set holds
+        @assert sum((β1 - res0.β).^2) < sqrt(eps())
+    end
 end
