@@ -42,6 +42,10 @@ mutable struct MonotoneSS
     fitted::AbstractVector{Float64}
 end
 
+## define the negative of splines
+Base.:-(x::MonotoneCS) = MonotoneCS(x.B, x.rB, -x.β, -x.fitted)
+Base.:-(x::MonotoneSS) = MonotoneSS(x.mx, x.rx, x.knots, x.B, x.Bend, x.Bendd, x.L, -x.β, -x.fitted)
+
 """
     rcopy(s::Spl)
 
@@ -183,11 +187,14 @@ function ci_mono_ss(x::AbstractVector, y::AbstractVector, λ = 1.0; ε = (eps())
 end
 
 """
-    mono_cs(x::AbstractVector, y::AbstractVector, J::Int = 4; xnew = nothing)
+    mono_cs(x::AbstractVector, y::AbstractVector, J::Int = 4; increasing::Bool = true)
 
 Monotone splines with cubic splines.
 """
-function mono_cs(x::AbstractVector, y::AbstractVector, J::Int = 4)
+function mono_cs(x::AbstractVector, y::AbstractVector, J::Int = 4; increasing::Bool = true)
+    if !increasing
+        return -mono_cs(x, -y, J, increasing = true)
+    end
     B, rB = build_model(x, J)
     βhat, yhat = mono_ss(B, y, zeros(J, J), J)
     return MonotoneCS(B, rB, βhat, yhat)
@@ -198,7 +205,10 @@ end
 
 Monotone splines with smoothing splines, return a `MonotoneSS` object.
 """
-function mono_ss(x::AbstractVector, y::AbstractVector, λ = 1.0; ε = (eps())^(1/3), prop_nknots = 1.0)
+function mono_ss(x::AbstractVector, y::AbstractVector, λ = 1.0; ε = (eps())^(1/3), prop_nknots = 1.0, increasing = true)
+    if !increasing
+        return -mono_ss(x, -y, λ; ε = ε, prop_nknots = prop_nknots, increasing = true)
+    end
     B, L, J, mx, rx, idx, idx0, Bend, Bendd, knots = build_model(x, prop_nknots = prop_nknots)
     βhat, yhat = mono_ss(B, y, L, J, λ; ε = ε)
     return MonotoneSS(mx, rx, knots, B, Bend, Bendd, L, βhat, yhat)
@@ -277,7 +287,10 @@ end
 
 Cross-validation for monotone fitting with smoothing spline on `y ~ x` among parameters `λs`.
 """
-function cv_mono_ss(x::AbstractVector{T}, y::AbstractVector{T}, λs = exp.(-6:0.5:1); ε = (eps())^(1/3), nfold = 10) where T <: AbstractFloat
+function cv_mono_ss(x::AbstractVector{T}, y::AbstractVector{T}, λs = exp.(-6:0.5:1); ε = (eps())^(1/3), nfold = 10, increasing = true) where T <: AbstractFloat
+    if !increasing
+        return cv_mono_ss(x, -y, λs; ε = ε, nfold = nfold, increasing = true)
+    end
     B, L, J = build_model(x)
     n = length(y)
     folds = div_into_folds(n, K = nfold, seed = -1)

@@ -33,6 +33,9 @@ x, y, x0, y0 = MonotoneSplines.gen_data(n, σ, exp, seed = 1234);
     @test res.B ≈ H atol=1e-3
     y0hat = predict(res, x0)
     @test length(y0hat) == length(y0)
+    # decreasing
+    res2 = mono_cs(x, -y, 4, increasing = false)
+    @test res2.β ≈ -res.β atol = 1e-3
 end
 
 @testset "monotone splines with smoothing splines" begin
@@ -41,6 +44,9 @@ end
     y0hat = predict(res, x0)
     @test length(yhat) == length(res.fitted)
     @test length(y0hat) == length(y0) == length(yhatnew)
+    # decreasing
+    res2 = mono_ss(x, -y, λ, increasing = false)
+    @test res2.β ≈ -res.β atol = 1e-3
 end
 
 @testset "monotone fitting without smoothness penalty" begin
