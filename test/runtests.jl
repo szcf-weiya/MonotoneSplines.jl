@@ -123,6 +123,29 @@ end
     @assert d1 ≈ d2
 end
 
+@testset "check boundary evaluation of Bspline" begin
+    knots = 0:0.1:1.0
+    J = length(knots) + 2
+    extended_knots = vcat(zeros(3), knots, ones(3))
+    # cubic
+    bbasis = R"fda::create.bspline.basis(breaks = $knots, norder = 4)" 
+    B = rcopy(R"fda::eval.basis($knots, $bbasis)")
+    for i in [4, 5, 6, J-1, J, J+1]
+        @test B[i-3, i-3:i-1] ≈ bs4_τi(extended_knots, i)
+    end
+    # @test B[1, 1:3] ≈ bs4_τi(extended_knots, 4) #τ_4 
+
+    # quadratic
+    bbasis2 = R"fda::create.bspline.basis(breaks = $knots, norder = 3)" 
+    B2 = rcopy(R"fda::eval.basis($knots, $bbasis2)")
+    for i in [4, 5, 6, J-1, J, J+1]
+        @test B2[i-3, i-3:i-2] ≈ bs3_τi(extended_knots, i)
+    end
+
+    dB2 = rcopy(R"fda::eval.basis($knots, $bbasis, Lfdobj=2)")
+    @test dB2[1, 1:3] ≈ 6/0.1 * [1 /0.1, -1/0.2-1/0.1, 1/0.2] # f''(τ_4)
+end
+
 @testset "check solution" begin
     x = 0:0.1:1.0
     y = x.^3
@@ -138,4 +161,14 @@ end
     if abs(res0.β[3] - res0.β[2]) < cbrt(eps()) # make sure the active set holds
         @assert sum((β1 - res0.β).^2) < sqrt(eps())
     end
+end
+
+@testset "check conditions for monotonicity" begin
+    γ = [1, 2, 3, 4]
+    ξ = [0, 1]
+    τ = vcat(zeros(3), ξ, ones(3))
+    bbasis = R"fda::create.bspline.basis(breaks = $ξ, norder = 4)"
+    @test is_sufficient(γ)
+    @test is_necessary(γ, τ, bbasis)
+    @test is_sufficient_and_necessary(γ, τ, bbasis)
 end

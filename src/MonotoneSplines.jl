@@ -1,6 +1,8 @@
 module MonotoneSplines
 
 include("utils.jl")
+include("conditions.jl")
+include("bspl.jl")
 include("mono_spl.jl")
 include("boot.jl")
 
@@ -40,7 +42,12 @@ export check_CI,
         ci_mono_ss_mlp,
         jaccard_index,
         rcopy,
-        predict
+        predict,
+        bs3_τi,
+        bs4_τi,
+        is_sufficient,
+        is_necessary,
+        is_sufficient_and_necessary
 
 if Base.VERSION >= v"1.4.2"
     include("precompile.jl")
