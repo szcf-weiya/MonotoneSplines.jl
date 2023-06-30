@@ -1,6 +1,7 @@
 using Test
 using MonotoneSplines
 using RCall
+TEST_MLP = true # use locally, since the time cost is relatively hight
 
 @testset "Jaccard Index" begin
     @test jaccard_index([0, 1], [0, 1]) ≈ 1
@@ -54,43 +55,45 @@ end
     @test 0 <= err < σ
 end
 
-@testset "compare monotone fitting" begin
-    λ = 1e-5;
-    Ghat, loss = mono_ss_mlp(x, y, λl = λ, λu = λ, device = :cpu, disable_progressbar = true);
-    Ghat2, loss2 = mono_ss_mlp(x, y, λl = λ, λu = λ, device = :cpu, backend = "pytorch", disable_progressbar = true);
-    @test isa(Ghat, Function)
-    @test isa(Ghat2, Function)
-    yhat = Ghat(y, λ);
-    yhat2 = Ghat2(y, λ);
-    yhat0 = mono_ss(x, y, λ, prop_nknots = 0.2).fitted;
-    @test sum((yhat - yhat0).^2) / n < 1e-3
-    @test sum((yhat2 - yhat0).^2) / n < 1e-3
-end
+if TEST_MLP
+    @testset "compare monotone fitting" begin
+        λ = 1e-5;
+        Ghat, loss = mono_ss_mlp(x, y, λl = λ, λu = λ, device = :cpu, disable_progressbar = true);
+        Ghat2, loss2 = mono_ss_mlp(x, y, λl = λ, λu = λ, device = :cpu, backend = "pytorch", disable_progressbar = true);
+        @test isa(Ghat, Function)
+        @test isa(Ghat2, Function)
+        yhat = Ghat(y, λ);
+        yhat2 = Ghat2(y, λ);
+        yhat0 = mono_ss(x, y, λ, prop_nknots = 0.2).fitted;
+        @test sum((yhat - yhat0).^2) / n < 1e-3
+        @test sum((yhat2 - yhat0).^2) / n < 1e-3
+    end
 
-@testset "compare confidence band between OPT solution and MLP generator" begin
-    # adapted from examples/monoci_mlp.jl
-    λl = 1e-2
-    λu = 1e-1
-    λs = range(λl, λu, length = 2)
-    RES0 = [ci_mono_ss(x, y, λ, prop_nknots = 0.2) for λ in λs]
-    Yhat0 = hcat([RES0[i][1] for i=1:2]...)
-    YCIs0 = [RES0[i][2] for i = 1:2]
-    Yhat, YCIs, LOSS = ci_mono_ss_mlp(x, y, λs, prop_nknots = 0.2, device = :cpu, backend = "flux", nepoch0 = 1, nepoch = 1, disable_progressbar = true);
-    Yhat2, YCIs2, LOSS2 = ci_mono_ss_mlp(x, y, λs, prop_nknots = 0.2, device = :cpu, backend = "pytorch", nepoch0 = 1, nepoch = 1, disable_progressbar = true);
-    overlap = [jaccard_index(YCIs[i], YCIs0[i]) for i = 1:2]
-    overlap2 = [jaccard_index(YCIs2[i], YCIs0[i]) for i = 1:2]
-    @test all(0.0 .< overlap .< 1.0)
-    @test all(0.0 .< overlap2 .< 1.0)
-end
+    @testset "compare confidence band between OPT solution and MLP generator" begin
+        # adapted from examples/monoci_mlp.jl
+        λl = 1e-2
+        λu = 1e-1
+        λs = range(λl, λu, length = 2)
+        RES0 = [ci_mono_ss(x, y, λ, prop_nknots = 0.2) for λ in λs]
+        Yhat0 = hcat([RES0[i][1] for i=1:2]...)
+        YCIs0 = [RES0[i][2] for i = 1:2]
+        Yhat, YCIs, LOSS = ci_mono_ss_mlp(x, y, λs, prop_nknots = 0.2, device = :cpu, backend = "flux", nepoch0 = 1, nepoch = 1, disable_progressbar = true);
+        Yhat2, YCIs2, LOSS2 = ci_mono_ss_mlp(x, y, λs, prop_nknots = 0.2, device = :cpu, backend = "pytorch", nepoch0 = 1, nepoch = 1, disable_progressbar = true);
+        overlap = [jaccard_index(YCIs[i], YCIs0[i]) for i = 1:2]
+        overlap2 = [jaccard_index(YCIs2[i], YCIs0[i]) for i = 1:2]
+        @test all(0.0 .< overlap .< 1.0)
+        @test all(0.0 .< overlap2 .< 1.0)
+    end
 
-@testset "check confidence bands" begin
-    res1 = check_CI(nrep = 1, nepoch0 = 1, nepoch = 1, fig = false, check_acc = false, nB = 10, backend = "pytorch", prop_nknots = 0.2, nhidden = 100, niter_per_epoch = 2) 
-    res2 = check_CI(nrep = 1, fig = false, check_acc = false, nB = 10, model_file = res1[end], prop_nknots = 0.2) 
-    @test res1[3] ≈ res2[3] # res_err is not random like CI results
-    res3 = check_CI(nrep = 1, nepoch0 = 1, nepoch = 1, fig = false, check_acc = false, nB = 10, backend = "flux", prop_nknots = 0.2, nhidden = 100, niter_per_epoch = 2, gpu_id = -1) 
-    # with flux backend, both `**.bson` and `**_ci.bson` are saved, so if check_acc=false, use `_ci.bson`
-    res4 = check_CI(nrep = 1, fig = false, check_acc = false, nB = 10, model_file = res3[end][1:end-5] *"_ci.bson", prop_nknots = 0.2, gpu_id = -1) 
-    @test res3[3] ≈ res4[3]
+    @testset "check confidence bands" begin
+        res1 = check_CI(nrep = 1, nepoch0 = 1, nepoch = 1, fig = false, check_acc = false, nB = 10, backend = "pytorch", prop_nknots = 0.2, nhidden = 100, niter_per_epoch = 2) 
+        res2 = check_CI(nrep = 1, fig = false, check_acc = false, nB = 10, model_file = res1[end], prop_nknots = 0.2) 
+        @test res1[3] ≈ res2[3] # res_err is not random like CI results
+        res3 = check_CI(nrep = 1, nepoch0 = 1, nepoch = 1, fig = false, check_acc = false, nB = 10, backend = "flux", prop_nknots = 0.2, nhidden = 100, niter_per_epoch = 2, gpu_id = -1) 
+        # with flux backend, both `**.bson` and `**_ci.bson` are saved, so if check_acc=false, use `_ci.bson`
+        res4 = check_CI(nrep = 1, fig = false, check_acc = false, nB = 10, model_file = res3[end][1:end-5] *"_ci.bson", prop_nknots = 0.2, gpu_id = -1) 
+        @test res3[3] ≈ res4[3]
+    end
 end
 
 @testset "confidence band width" begin
@@ -102,6 +105,48 @@ end
     @test isa(logit, Function)
     @test isa(logit5, Function)
     @test isa(sinhalfpi, Function)
+end
+
+R"""
+recover.Sigma <- function(Sigma) {
+    n = length(Sigma)
+    # just 4p = n, NOT p + p-1 + p-2 + p-3 = 4p - 6 = n
+    p = n/4
+    res = matrix(0, nrow = p, ncol = p)
+    diag(res) = Sigma[1:p]
+    diag(res[1:(p-1),2:p]) = Sigma[(p+1):(2*p-1)]
+    diag(res[2:p, 1:(p-1)]) = Sigma[(p+1):(2*p-1)]
+    diag(res[1:(p-2),3:p]) = Sigma[(2*p+1):(3*p-2)]
+    diag(res[3:p, 1:(p-2)]) = Sigma[(2*p+1):(3*p-2)]
+    diag(res[1:(p-3),4:p]) = Sigma[(3*p+1):(4*p-3)]
+    diag(res[4:p, 1:(p-3)]) = Sigma[(3*p+1):(4*p-3)]
+    return(res)
+  }
+"""
+@testset "smooth.spline vs fda::" begin
+    x = rand(100)
+    y = x .^2 + randn(100) * 0.1
+    sfit = R"smooth.spline($x, $y, keep.stuff = TRUE, all.knots = TRUE)"
+    Σ = rcopy(R"recover.Sigma($sfit$auxM$Sigma)")
+    XWX = rcopy(R"recover.Sigma($sfit$auxM$XWX)")
+    λ = rcopy(R"$sfit$lambda")
+    knots, xmin, rx, idx, idx0 = MonotoneSplines.pick_knots(x, all_knots = true)
+    xbar = (x .- xmin) / rx
+    @test xbar[idx] == knots
+    @test rx == rcopy(R"$sfit$fit$range")
+    @test xmin == rcopy(R"$sfit$fit$min")
+    bbasis = R"fda::create.bspline.basis(breaks = $knots, norder = 4)"
+    Ω = rcopy(R"fda::eval.penalty($bbasis, 2)")
+    B = rcopy(R"fda::eval.basis($knots, $bbasis)")
+    n, p = size(B)
+    @test sum((Ω - Σ).^2) / sum(Ω.^2) < 1e-3 # the absolute difference might be slightly larger, so normalize it by Ω
+    @test XWX ≈ B' * B
+    # only on unique values
+    βhat = inv(B' * B + λ*Ω) * B' * y[idx]
+    βhat1 = inv(B' * B + λ*Σ) * B' * y[idx]
+    βhat0 = rcopy(R"$sfit$fit$coef")
+    @test sum((βhat - βhat0).^2) / p < 1e-7
+    @test sum((βhat1 - βhat0).^2) / p < 1e-7
 end
 
 @testset "check derivative of Bspline" begin
@@ -171,4 +216,24 @@ end
     @test is_sufficient(γ)
     @test is_necessary(γ, τ, bbasis)
     @test is_sufficient_and_necessary(γ, τ, bbasis)
+end
+
+@testset "check conditions by areas" begin
+    ## J = 4
+    ξ = [0, 1]
+    τ = vcat(zeros(3), ξ, ones(3))
+    bbasis = R"fda::create.bspline.basis(breaks = $ξ, norder = 4)"
+    γ1s = range(-10, 10, step = 1)
+    γ2s = range(-10, 10, step = 1)
+    res = zeros(length(γ1s), length(γ2s), 3)
+    for (i, γ1) in enumerate(γ1s)
+        for (j, γ2) in enumerate(γ2s)
+            γ = [γ1, γ2, 3, 4]
+            res[i, j, 1] = is_sufficient(γ)
+            res[i, j, 2] = is_necessary(γ, τ, bbasis)
+            res[i, j, 3] = is_sufficient_and_necessary(γ, τ, bbasis)
+        end
+    end
+    areas = sum(res, dims = (1, 2))[:]
+    @test areas[1] <= areas[3] <= areas[2]
 end
