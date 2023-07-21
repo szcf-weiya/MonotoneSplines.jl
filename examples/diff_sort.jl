@@ -5,6 +5,7 @@
 #
 # This section will compare these two operations and show that their difference are neglectable.
 using MonotoneSplines
+__init_pytorch__()
 using Plots
 
 # First of all, generate data $y = \exp(x) + ϵ$,

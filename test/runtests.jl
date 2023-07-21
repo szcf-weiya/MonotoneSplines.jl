@@ -1,6 +1,7 @@
 using Test
 using MonotoneSplines
 using RCall
+__init_pytorch__()
 TEST_MLP = true # use locally, since the time cost is relatively hight
 
 @testset "Jaccard Index" begin

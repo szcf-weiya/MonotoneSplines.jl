@@ -1,6 +1,7 @@
 # This section illustrates how to obtain the confidence band with MLP generator. The confidence bands, either with PyTorch backend or Flux backend, are compared with the one calculated from classical parametric bootstrap. 
 using MonotoneSplines
 using Plots
+__init_pytorch__() # initialize supports for PyTorch backend
 
 # Firstly, we generate data from $y=\exp(x)+N(0, 0.1^2)$,
 n = 20

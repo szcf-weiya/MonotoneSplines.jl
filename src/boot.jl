@@ -1,7 +1,6 @@
 # rename to GpBS? (c.f. GBS)
 using Flux
 using Plots
-using PyCall
 using Serialization
 using Random
 using BSON
@@ -120,6 +119,9 @@ function check_CI(; n = 100, σ = 0.1, f = exp, seed = 1234,
                                                     λl = λl, λu = λu)
                     LOSS = vcat(loss0, loss)
                 else # backend = "pytorch"
+                    if !(@isdefined PyCall)
+                        error("PyCall/PyTorch is not properly loaded, please use Flux backend or re-install PyCall")
+                    end            
                     M = K
                     model_file = "model-$f-$σ-n$n-J$J-nhidden$nhidden-$i-$seed-$timestamp.pt"
                     Ghat, LOSS = py_train_G_lambda(y,
@@ -383,6 +385,9 @@ function mono_ss_mlp(x::AbstractVector, y::AbstractVector; prop_nknots = 0.2,
     if backend == "flux"
         Ghat, LOSS = train_Gλ(y, B, L; λl = λl, λu = λu, device = device, nhidden = nhidden, disable_progressbar = disable_progressbar, kw...)
     else
+        if !(@isdefined PyCall)
+            error("PyCall/PyTorch is not properly loaded, please use Flux backend or re-install PyCall")
+        end
         Ghat, LOSS = py_train_G_lambda(y, B, L; nepoch = 0, nepoch0 = 3, 
                                                 λl = λl, λu = λu, 
                                                 disable_tqdm = disable_progressbar,
@@ -444,6 +449,9 @@ function ci_mono_ss_mlp(x::AbstractVector{T}, y::AbstractVector{T}, λs::Abstrac
                                          kw...)
         LOSS = vcat(loss0, loss)                                         
     else
+        if !(@isdefined PyCall)
+            error("PyCall/PyTorch is not properly loaded, please use Flux backend or re-install PyCall")
+        end
         Ghat, LOSS = py_train_G_lambda(y, B, L; nepoch = nepoch, nepoch0 = nepoch0, 
                                                 gpu_id = ifelse(device == :cpu, -1, 0), 
                                                 λl = λl, λu = λu,
@@ -535,7 +543,7 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
     #println(typeof(py_ret)) #Tuple{PyCall.PyObject, Matrix{Float32}} 
     # ....................... # Tuple{PyCall.PyObject, PyCall.PyArray{Float32, 2}}
     #LOSS = Matrix(py_ret[2]) # NB: not necessarily a matrix, but possibly a matrix
-    return (y, λ) -> B * py"$Ghat"(Float32.(vcat(y, aug(λ)))), LOSS
+    return (y, λ) -> B * Ghat."__call__"(Float32.(vcat(y, aug(λ)))), LOSS
     #return y -> py"$(py_ret[1])"(Float32.(y)), LOSS
 end
 
@@ -550,8 +558,11 @@ function load_model(B::Matrix, model_file::String; dim_lam = 8, gpu_id = 3)
     J = params["J"]
     nhidden = params["nhidden"]
     if model_file[end-1:end] == "pt" # backend is pytorch
+        if !(@isdefined PyCall)
+            error("PyCall/PyTorch is not properly loaded, please use Flux backend or re-install PyCall")
+        end
         Ghat = _py_boot."load_model"(n, dim_lam, J, nhidden, model_file, gpu_id)
-        return (y, λ) -> B * py"$Ghat"(Float32.(vcat(y, aug(λ))))
+        return (y, λ) -> B * Ghat."__call__"(Float32.(vcat(y, aug(λ))))
     else
         device = ifelse(gpu_id == -1, cpu, gpu)
         Ghat = BSON.load(model_file, @__MODULE__)[:G] # assume sort_in_nn

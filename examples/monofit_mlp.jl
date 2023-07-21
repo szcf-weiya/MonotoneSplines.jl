@@ -1,5 +1,6 @@
 # This section illustrates how to use the MLP generator to perform the monotone fitting. The MLP generator can achieve a perfect approximation to the fitting curve obtained from the optimization toolbox quickly. Particulaly, the MLP generator can save time by avoiding repeating to run the optimization toolbox for continuous $\lambda$ since it only needs to train once to obtain the function $G(\lambda)$, which can immediately return the solution at $\lambda=\lambda_0$ by simply evaluating $G(\lambda_0)$.
 using MonotoneSplines
+__init_pytorch__() # initialize supports for PyTorch backend
 using Plots
 
 # We want to train a MLP generator $G(λ)$ to approximate the solution for the monotone spline.
