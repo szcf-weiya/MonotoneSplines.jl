@@ -28,16 +28,8 @@ _runtime_init() = @eval begin
     copy!(_py_boot, PyCall.pyimport("boot"))    
 end
 
-function __init__()
-    nothing
-end
-
-export check_CI,
-       check_acc,
-        cubic,
-        logit,
-        logit5,
-        sinhalfpi,
+export  check_CI,
+        check_acc,
         smooth_spline,
         mono_cs,
         mono_ss,

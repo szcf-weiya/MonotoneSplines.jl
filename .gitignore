@@ -6,3 +6,4 @@ Manifest.toml
 *.png
 docs/build
 docs/src/examples
+*.log

@@ -1,10 +1,11 @@
 name = "MonotoneSplines"
 uuid = "92812004-5f8d-4354-96af-0c8b7c0637d0"
 authors = ["szcf-weiya <szcfweiya@gmail.com>"]
-version = "0.1.0"
+version = "0.1.1"
 
 [deps]
 BSON = "fbb218c0-5317-5bc6-957e-2ee96dd4b1f0"
+Conda = "8f4d0f93-b110-5947-807f-2305c1781a2d"
 ECOS = "e2685f51-7e38-5353-a97d-a921fd2c8199"
 Flux = "587475ba-b771-5e3f-ad9e-33799f191a9c"
 JuMP = "4076af6c-e467-56ae-b986-b466b2749572"
@@ -19,6 +20,7 @@ Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
 
 [compat]
 BSON = "0.3"
+Conda = "1.4"
 ECOS = "1.1"
 Flux = "0.13"
 JuMP = "1.3"

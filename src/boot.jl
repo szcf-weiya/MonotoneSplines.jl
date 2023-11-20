@@ -7,12 +7,6 @@ using BSON
 using Zygote
 using ProgressMeter
 
-## determine functions formally (NB: Be better not to change the name)
-cubic(x) = x^3
-logit(x) = 1/(1+exp(-x))
-logit5(x) = 1/(1+exp(-5x))
-sinhalfpi(x) = sin(pi/2 * x)
-
 """
     check_CI(; <keyword arguments>)
 

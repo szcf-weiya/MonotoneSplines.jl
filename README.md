@@ -8,16 +8,20 @@
 
 Check the following paper for more details.
 
-> Wang, L., Fan, X., Li, H., & Liu, J. S. (2023). Monotone Cubic B-Splines (arXiv:2307.01748). arXiv. https://doi.org/10.48550/arXiv.2307.01748
+> Wang, Lijun, Xiaodan Fan, Huabai Li, and Jun S. Liu. “Monotone Cubic B-Splines with a Neural-Network Generator.” arXiv, November 17, 2023. https://doi.org/10.48550/arXiv.2307.01748.
 
 ```
-@misc{wang2023monotone,
-      title={Monotone Cubic B-Splines}, 
-      author={Lijun Wang and Xiaodan Fan and Huabai Li and Jun S. Liu},
-      year={2023},
-      eprint={2307.01748},
-      archivePrefix={arXiv},
-      primaryClass={stat.ME}
+@online{wangMonotoneCubicBSplines2023c,
+  title = {Monotone {{Cubic B-Splines}} with a {{Neural-Network Generator}}},
+  author = {Wang, Lijun and Fan, Xiaodan and Li, Huabai and Liu, Jun S.},
+  date = {2023-11-17},
+  eprint = {2307.01748},
+  eprinttype = {arxiv},
+  eprintclass = {astro-ph, stat},
+  doi = {10.48550/arXiv.2307.01748},
+  url = {http://arxiv.org/abs/2307.01748},
+  urldate = {2023-11-20},
+  pubstate = {preprint}
 }
 ```
 
@@ -41,8 +45,6 @@ julia> ]
 (@v1.8) pkg> add MonotoneSplines
 ```
 
-
-
 By default, both `PyCall.jl` and `RCall.jl` would try to use the system Python and R, respectively (more details can be found in their repos). 
 
 ### :ladder: standalone R and Python via Conda.jl
@@ -55,6 +57,8 @@ julia> ENV["R_HOME"]="*"
 julia> ]
 (@v1.8) pkg> add MonotoneSplines
 ```
+
+If you use the standalone R provided by Conda in Julia, the dependent R packages will be automatically installed during the building step.
 
 ## :books: Documentation
 

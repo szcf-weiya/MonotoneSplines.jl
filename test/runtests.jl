@@ -101,13 +101,6 @@ end
     @test MonotoneSplines.conf_band_width([0 1; 0 3]) ≈ 2.0
 end
 
-@testset "example functions" begin
-    @test isa(cubic, Function)
-    @test isa(logit, Function)
-    @test isa(logit5, Function)
-    @test isa(sinhalfpi, Function)
-end
-
 R"""
 recover.Sigma <- function(Sigma) {
     n = length(Sigma)
