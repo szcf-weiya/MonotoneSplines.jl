@@ -1,4 +1,3 @@
-# rename to GpBS? (c.f. GBS)
 using Flux
 using Plots
 using Serialization
@@ -40,22 +39,19 @@ Conduct repeated experiments to check the overlap of confidence bands (default, 
 - `backend = "flux"`: train MLP generator with Flux or PyTorch
 """
 function check_CI(; n = 100, σ = 0.1, f = exp, seed = 1234, 
-                    nepoch0 = 5, nepoch = 50, niter_per_epoch = 100, 
-                    η0 = 1e-4, η = 1e-4, 
+                    nepoch0 = 5, nepoch = 50, niter_per_epoch = 100, # number of iterations
+                    η0 = 1e-4, η = 1e-4, # learning rate
                     nrep = 5, α = 0.05, C = 1, 
                     backend = "pytorch",
                     K0 = 10, K = 10,
                     nB = 2000, 
                     λs = exp.(range(-8, -2, length = 10)),
-                    γ = 0.9, # deprecated
                     demo = false, # save internal results for demo purpose
-                    decay_step = 5, # deprecated
                     prop_nknots = 1.0,
                     nhidden = 1000, depth = 2,
-                    gpu_id = 3,
+                    gpu_id = 0,
                     model_file = nothing,
-                    cooldown2 = 10, # deprecated
-                    patience = 100, cooldown = 100, # deprecated
+                    patience = 100, 
                     sort_in_nn = true, # only flux
                     check_acc = false, # reduce to check_acc
                     fig = true, figfolder = "~", kw...
@@ -121,14 +117,13 @@ function check_CI(; n = 100, σ = 0.1, f = exp, seed = 1234,
                     Ghat, LOSS = py_train_G_lambda(y,
                                                     B, L, K = M, nepoch = nepoch, η = η, 
                                                     K0 = K0,
-                                                    γ = γ, η0 = η0, 
+                                                    η0 = η0, 
                                                     use_torchsort = false,
                                                     gpu_id = gpu_id,
                                                     nhidden = nhidden, depth = depth,
-                                                    niter_per_epoch = niter_per_epoch, cooldown2 = cooldown2,
+                                                    niter_per_epoch = niter_per_epoch,
                                                     model_file = model_file,
-                                                    patience = patience, cooldown = cooldown,
-                                                    decay_step = decay_step, 
+                                                    patience = patience,
                                                     nepoch0 = nepoch0, λl = λs[1], λu = λs[end])
                 end    
                 if fig
@@ -512,8 +507,6 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
                             η = 0.001, η0 = 0.001, 
                             K0 = 10, K = 10, 
                             nhidden = 1000, depth = 2,
-                            γ = 0.9, # deprecated
-                            decay_step = 5, # deprecated
                             patience = 100, patience0 = 100, disable_early_stopping = true, # deprecated
                             nepoch0 = 100, nepoch = 100, 
                             λl = 1e-9, λu = 1e-4,
@@ -528,8 +521,7 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
     Ghat, LOSS, LOSS1 = _py_boot."train_G_lambda"(Float32.(y), Float32.(B), Float32.(L), eta = η, K = K, 
                                             K0 = K0,
                                             nepoch = nepoch,
-                                            gamma = γ, eta0 = η0, 
-                                            decay_step = decay_step, 
+                                            eta0 = η0, 
                                             nepoch0 = nepoch0, 
                                             lam_lo = λl, lam_up = λu, 
                                             model_file = model_file,
