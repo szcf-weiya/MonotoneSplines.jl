@@ -55,7 +55,7 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10,
     if lams_opt_train is not None:
         betas_opt_train = torch.from_numpy(betas_opt_train).to(device, non_blocking = True)
         betas_opt_val = torch.from_numpy(betas_opt_val).to(device, non_blocking = True)
-        LOSS_betas = torch.zeros(nepoch0, 2).to(device)
+        LOSS_betas = torch.zeros(nepoch0 * niter_per_epoch, 2).to(device)
     n, J = B.size()
     dim_lam = 8
     model = Model(n+dim_lam, J, nhidden, depth, use_torchsort, sort_reg_strength).to(device)
@@ -97,6 +97,22 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10,
             pbar0.set_postfix(iter = ii, loss = loss1.item())
             if ii == niter_per_epoch - 1:
                 LOSS0[epoch, 0] = loss1.item()
+            if lams_opt_train is not None:
+                loss_betas = []
+                for i, lam in enumerate(lams_opt_train):
+                    aug_lam = torch.tensor(aug(lam), dtype=torch.float32, device = device)
+                    ylam = torch.cat((y, aug_lam.repeat((1, 1))), dim=1)
+                    beta = model(ylam)
+                    loss_betas.append(loss_fn(betas_opt_train[i, :], beta[0]).item()) # beta is 1xJ
+                LOSS_betas[epoch*niter_per_epoch+ii, 0] = np.mean(loss_betas)
+
+                loss_betas = []
+                for i, lam in enumerate(lams_opt_val):
+                    aug_lam = torch.tensor(aug(lam), dtype=torch.float32, device = device)
+                    ylam = torch.cat((y, aug_lam.repeat((1, 1))), dim=1)
+                    beta = model(ylam)
+                    loss_betas.append(loss_fn(betas_opt_val[i, :], beta[0]).item())
+                LOSS_betas[epoch*niter_per_epoch+ii, 1] = np.mean(loss_betas)
         
         for i in range(3):
             lam = query_lams[i]
@@ -106,22 +122,6 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10,
             ypred = torch.matmul(beta, B.t())
             LOSS0[epoch, i+1] = loss_fn(ypred, y) + lam * torch.square(torch.matmul(beta, L)).mean() * J / n
         print(f"epoch = {epoch}, L(lam) = {LOSS0[epoch, 0]:.6f}, L(lam_lo) = {LOSS0[epoch, 1]:.6f}, L(lam_up) = {LOSS0[epoch, 2]:.6f}")
-        if lams_opt_train is not None:
-            loss_betas = []
-            for i, lam in enumerate(lams_opt_train):
-                aug_lam = torch.tensor(aug(lam), dtype=torch.float32, device = device)
-                ylam = torch.cat((y, aug_lam.repeat((1, 1))), dim=1)
-                beta = model(ylam)
-                loss_betas.append(loss_fn(betas_opt_train[i, :], beta[0]).item()) # beta is 1xJ
-            LOSS_betas[epoch, 0] = np.mean(loss_betas)
-
-            loss_betas = []
-            for i, lam in enumerate(lams_opt_val):
-                aug_lam = torch.tensor(aug(lam), dtype=torch.float32, device = device)
-                ylam = torch.cat((y, aug_lam.repeat((1, 1))), dim=1)
-                beta = model(ylam)
-                loss_betas.append(loss_fn(betas_opt_val[i, :], beta[0]).item())
-            LOSS_betas[epoch, 1] = np.mean(loss_betas)
 
         # sch1.step()
         if not disable_early_stopping:
@@ -227,7 +227,7 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10,
     if lams_opt_train is not None:
         beta_loss = LOSS_betas.cpu().detach().numpy()
         #return G, train_loss, ret_loss, beta_loss
-        return G, beta_loss, ret_loss # keep the same number of return parameters, then in Julia, LOSS is the beta_loss
+        return G, train_loss, beta_loss, ret_loss # keep the same number of return parameters, then in Julia, LOSS is the beta_loss
     return G, train_loss, ret_loss
 
 def load_model(n, dim_lam, J, nhidden, model_file, gpu_id = 3):

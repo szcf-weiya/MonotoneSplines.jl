@@ -7,6 +7,7 @@ indir = joinpath(@__DIR__, "..", "examples")
 outdir = joinpath(@__DIR__, "src", "examples")
 files = ["monofit.jl", "ph.jl", 
         "monofit_mlp.jl", "monoci_mlp.jl", 
+        "monofit_mlp_beta_loss.jl",
         "diff_sort.jl", "conditions.jl"]
 for file in files
     Literate.markdown(joinpath(indir, file), outdir; credit = false)
@@ -23,6 +24,7 @@ makedocs(sitename="MonotoneSplines.jl",
                 "Application: Polarization-hole" => "examples/ph.md",
                 "MLP Generator (fitting curve)" => "examples/monofit_mlp.md",
                 "MLP Generator (confidence band)" => "examples/monoci_mlp.md",
+                "MLP Generator (beta loss)" => "examples/monofit_mlp_beta_loss.md",
                 "Differentiable Sort" => "examples/diff_sort.md"
             ],
             "API" => "api.md"

@@ -503,6 +503,10 @@ Wrapper for training MLP generator using PyTorch.
 - `gpu_id = 0`: use specified GPU
 - `niter_per_epoch = 100`: number of iterations in each epoch
 - `disable_tqdm = false`: set `true` when generating documentation
+- `λs_opt_train = nothing`: if not `nothing` and instead a vector of `λ` (dim: `N_t`)  used in the classical ML training step, then return the beta loss of GpBS procedure
+- `λs_opt_val = nothing`: if not `nothing` and instead a vector of `λ` (dim: `N_v`) used in the classical ML validation step (integrative predictive loss), then return the beta loss of GpBS procedure
+- `βs_opt_train = nothing`: if not `nothing` and instead a matrix of `β` (dim: `N_t x J`) used in the classical ML training step, then return the beta loss of GpBS procedure
+- `βs_opt_val = nothing`: if not `nothing` and instead a matrix of `β` (dim: `N_v x J`) used in the classical ML validation step, then return the beta loss of GpBS procedure
 """
 function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatrix; 
                             η = 0.001, η0 = 0.001, 
@@ -519,10 +523,9 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
                             niter_per_epoch = 100,
                             disable_tqdm = false,
                             λs_opt_train = nothing, λs_opt_val = nothing,
-                            βs_opt_train = nothing, βs_opt_val = nothing,
-                            kw...
+                            βs_opt_train = nothing, βs_opt_val = nothing
                             )
-    Ghat, LOSS = _py_boot."train_G_lambda"(Float32.(y), Float32.(B), Float32.(L), eta = η, K = K, 
+    Ghat, LOSS, LOSS1 = _py_boot."train_G_lambda"(Float32.(y), Float32.(B), Float32.(L), eta = η, K = K, 
                                             K0 = K0,
                                             nepoch = nepoch,
                                             gamma = γ, eta0 = η0, 
@@ -542,7 +545,7 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
     #println(typeof(py_ret)) #Tuple{PyCall.PyObject, Matrix{Float32}} 
     # ....................... # Tuple{PyCall.PyObject, PyCall.PyArray{Float32, 2}}
     #LOSS = Matrix(py_ret[2]) # NB: not necessarily a matrix, but possibly a matrix
-    return (y, λ) -> B * Ghat."__call__"(Float32.(vcat(y, aug(λ)))), LOSS
+    return (y, λ) -> B * Ghat."__call__"(Float32.(vcat(y, aug(λ)))), LOSS, LOSS1, (y, λ) -> Ghat."__call__"(Float32.(vcat(y, aug(λ))))
     #return y -> py"$(py_ret[1])"(Float32.(y)), LOSS
 end
 
