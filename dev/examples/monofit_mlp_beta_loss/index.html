@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>MLP Generator (beta loss) · MonotoneSplines.jl</title><script data-outdated-warner src="../../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.045/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.13.24/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../../">MonotoneSplines.jl</a></span></div><form class="docs-search" action="../../search/"><input class="docs-search-query" id="documenter-search-query" name="q" type="text" placeholder="Search docs"/></form><ul class="docs-menu"><li><a class="tocitem" href="../../">Home</a></li><li><span class="tocitem">Examples</span><ul><li><a class="tocitem" href="../monofit/">Monotone Fitting</a></li><li><a class="tocitem" href="../conditions/">Conditions</a></li><li><a class="tocitem" href="../ph/">Application: Polarization-hole</a></li><li><a class="tocitem" href="../monofit_mlp/">MLP Generator (fitting curve)</a></li><li><a class="tocitem" href="../monoci_mlp/">MLP Generator (confidence band)</a></li><li class="is-active"><a class="tocitem" href>MLP Generator (beta loss)</a></li><li><a class="tocitem" href="../diff_sort/">Differentiable Sort</a></li></ul></li><li><a class="tocitem" href="../../api/">API</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Examples</a></li><li class="is-active"><a href>MLP Generator (beta loss)</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>MLP Generator (beta loss)</a></li></ul></nav><div class="docs-right"><a class="docs-edit-link" href="https://github.com/szcf-weiya/MonotoneSplines.jl/blob/master/examples/monofit_mlp_beta_loss.jl" title="Edit on GitHub"><span class="docs-icon fab"></span><span class="docs-label is-hidden-touch">Edit on GitHub</span></a><a class="docs-settings-button fas fa-cog" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-sidebar-button fa fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a></div></header><article class="content" id="documenter-page"><p>This section compares the beta loss when directly applying the classica MLP to train <span>$(λ, β)$</span></p><pre><code class="language-julia hljs">using MonotoneSplines
+using Plots
+using Random
+__init_pytorch__() # initialize supports for PyTorch backend</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">PyObject &lt;module &#39;boot&#39; from &#39;/home/runner/work/MonotoneSplines.jl/MonotoneSplines.jl/src/boot.py&#39;&gt;</code></pre><p>Generate samples</p><pre><code class="language-julia hljs">seed = 1
+n = 100
+σ = 0.2
+prop_nknots = 0.2
+f = x -&gt; x^3
+x = rand(MersenneTwister(seed), n) * 2 .- 1
+y = f.(x) + randn(MersenneTwister(seed+1), n) * σ</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">100-element Vector{Float64}:
+  0.0007819503546631634
+ -0.17782624307112058
+ -0.1742614506793042
+ -1.2979823247474416
+ -0.13513493385996378
+ -0.08183503123964558
+  0.5660362347385295
+  1.1030450840101351
+  0.12712269579175728
+  1.155935257401418
+  ⋮
+ -0.06035131206452983
+  0.37117086314660136
+ -0.12565509945611203
+ -0.14361458475165484
+ -0.07610037738674293
+ -0.4362535693694123
+  0.08783960166858745
+  0.029232900958345298
+  0.02312389902322433</code></pre><p>construct B spline basis matrix</p><pre><code class="language-julia hljs">B, L, J = MonotoneSplines.build_model(x, prop_nknots = prop_nknots)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">([0.0 0.0 … 0.0 0.0; 0.0 0.0 … 0.0 0.0; … ; 0.0 0.0 … 0.0 0.0; 0.0 0.0 … 0.0 0.0], [101.9428539030352 0.0 … 0.0 0.0; -139.08167285801295 31.71316023009978 … 0.0 0.0; … ; 0.0 0.0 … 0.15896851969011258 0.0; 0.0 0.0 … -0.15118239117609084 0.004914483718312649], 14, -0.9841814332188785, 1.9839907510161057, [4, 33, 91, 38, 100, 12, 78, 11, 43, 77, 42, 8], [4, 57, 18, 35, 21, 27, 29, 97, 55, 33  …  42, 69, 7, 85, 54, 34, 10, 74, 80, 8], [1.0 0.0 … 0.0 0.0; 0.0 0.0 … 0.0 1.0], [-28.595566037824863 28.595566037824863 … 0.0 0.0; 0.0 0.0 … -28.144709657570832 28.144709657570832], [0.0, 0.10491136968688579, 0.21899472817772042, 0.27367650493628326, 0.3338442475676866, 0.4326619879646609, 0.5157437085725072, 0.5522624575275193, 0.6453099284911253, 0.7665855741024367, 0.8934080316869423, 1.0])</code></pre><p>Range of the smoothness parameter λ</p><pre><code class="language-julia hljs">λs = 10 .^ (range(-6, 0, length = 10))
+λmin = minimum(λs)
+λmax = maximum(λs)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">1.0</code></pre><p>Set number of λ for training and validation</p><pre><code class="language-julia hljs">N = 100
+ngrid = 100
+arr_λs = rand(N) * (λmax - λmin) .+ λmin
+βs = [mono_ss(x, y, λ, prop_nknots = prop_nknots).β for λ in arr_λs]
+βs_mat = vcat(βs&#39;...)&#39;
+λs_mat = vcat(MonotoneSplines.aug.(arr_λs)&#39;...)&#39;</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">8×100 adjoint(::Matrix{Float64}) with eltype Float64:
+  0.84318    0.431223    0.727837  …   0.678795   0.618857   0.593
+  0.944728   0.755499    0.899521      0.878846   0.852178   0.84014
+  2.32374    1.53914     2.0706        1.9715     1.8568     1.80941
+  0.918248   0.656676    0.853134      0.82389    0.786675   0.770065
+ -0.170575  -0.841129   -0.317678     -0.387437  -0.479881  -0.522561
+  8.4318     4.31223     7.27837   …   6.78795    6.18857    5.93
+  0.710952   0.185954    0.529747      0.460762   0.382984   0.351649
+  0.599461   0.0801876   0.385569      0.312763   0.237012   0.208528</code></pre><p>for integrative loss</p><pre><code class="language-julia hljs">grid_λs = range(λmin, λmax, length=ngrid)
+grid_βs = [mono_ss(x, y, λ, prop_nknots = prop_nknots).β for λ in grid_λs]
+βs_grid_mat = vcat(grid_βs&#39;...)&#39;
+λs_grid_mat = vcat(MonotoneSplines.aug.(grid_λs)&#39;...)&#39;</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">8×100 adjoint(::Matrix{Float64}) with eltype Float64:
+   1.0e-6    0.010102     0.020203     …   0.979798    0.989899    1.0
+   0.01      0.216174     0.272357         0.99322     0.996622    1.0
+   1.0       1.01015      1.02041          2.66392     2.69096     2.71828
+   0.001     0.100509     0.142137         0.989847    0.994937    1.0
+ -13.8155   -4.59502     -3.90192         -0.0204089  -0.0101524   0.0
+   1.0e-5    0.10102      0.20203      …   9.79798     9.89899    10.0
+   1.0e-12   0.00010205   0.000408161      0.960004    0.9799      1.0
+   1.0e-18   1.03091e-6   8.24608e-6       0.94061     0.970002    1.0</code></pre><p>train GpBS</p><pre><code class="language- hljs">G, Loss, Loss1, bfun = MonotoneSplines.py_train_G_lambda(y, B, L, nepoch = 0, nepoch0 = 3, K = N,
+            λl = λmin, λu = λmax, gpu_id = -1,
+            nhidden = 1000,
+            λs_opt_train = λs, λs_opt_val = grid_λs,
+            βs_opt_train = βs_mat&#39;, βs_opt_val = βs_grid_mat&#39;,
+            niter_per_epoch = 200)</code></pre><p>Check training loss</p><pre><code class="language- hljs">plot(Loss, label = &quot;training loss&quot;)</code></pre><p>Check beta loss</p><pre><code class="language- hljs">plot(Loss1[:, 1], label = &quot;training L2 beta Loss&quot;)
+plot!(Loss1[:, 2], label = &quot;expected L2 beta loss&quot;)</code></pre></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../monoci_mlp/">« MLP Generator (confidence band)</a><a class="docs-footer-nextpage" href="../diff_sort/">Differentiable Sort »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 0.27.25 on <span class="colophon-date" title="Sunday 18 February 2024 21:26">Sunday 18 February 2024</span>. Using Julia version 1.8.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
