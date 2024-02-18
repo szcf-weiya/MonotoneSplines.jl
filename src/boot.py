@@ -43,13 +43,19 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10,
                     patience = 100, patience0 = 100, disable_early_stopping = True, # TODO: early stopping  
                     eval_sigma_adaptive = False, # if False, use `model0` to evaluate sigma
                     model_file = "model_G.pt", 
-                    step2_use_tensor = True, amsgrad = True, # no need to modified
+                    step2_use_tensor = True, amsgrad = True, # no need to modified,
+                    lams_opt_train = None, lams_opt_val = None, # each lam corresponds to a beta (dim: N)
+                    betas_opt_train = None, betas_opt_val = None, # evaluate the loss between the OPT solution and GpBS solution here (dim NxJ)
                     disable_tqdm = False):
     #
     device = f"cuda:{gpu_id}" if torch.cuda.is_available() and gpu_id != -1 else "cpu"
     y = torch.from_numpy(y[None, :]).to(device, non_blocking=True)
     B = torch.from_numpy(B).to(device, non_blocking=True)
     L = torch.from_numpy(L).to(device, non_blocking=True)
+    if lams_opt_train is not None:
+        betas_opt_train = torch.from_numpy(betas_opt_train).to(device, non_blocking = True)
+        betas_opt_val = torch.from_numpy(betas_opt_val).to(device, non_blocking = True)
+        LOSS_betas = torch.zeros(nepoch0, 2).to(device)
     n, J = B.size()
     dim_lam = 8
     model = Model(n+dim_lam, J, nhidden, depth, use_torchsort, sort_reg_strength).to(device)
@@ -100,6 +106,23 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10,
             ypred = torch.matmul(beta, B.t())
             LOSS0[epoch, i+1] = loss_fn(ypred, y) + lam * torch.square(torch.matmul(beta, L)).mean() * J / n
         print(f"epoch = {epoch}, L(lam) = {LOSS0[epoch, 0]:.6f}, L(lam_lo) = {LOSS0[epoch, 1]:.6f}, L(lam_up) = {LOSS0[epoch, 2]:.6f}")
+        if lams_opt_train is not None:
+            loss_betas = []
+            for i, lam in enumerate(lams_opt_train):
+                aug_lam = torch.tensor(aug(lam), dtype=torch.float32, device = device)
+                ylam = torch.cat((y, aug_lam.repeat((1, 1))), dim=1)
+                beta = model(ylam)
+                loss_betas.append(loss_fn(betas_opt_train[i, :], beta[0]).item()) # beta is 1xJ
+            LOSS_betas[epoch, 0] = np.mean(loss_betas)
+
+            loss_betas = []
+            for i, lam in enumerate(lams_opt_val):
+                aug_lam = torch.tensor(aug(lam), dtype=torch.float32, device = device)
+                ylam = torch.cat((y, aug_lam.repeat((1, 1))), dim=1)
+                beta = model(ylam)
+                loss_betas.append(loss_fn(betas_opt_val[i, :], beta[0]).item())
+            LOSS_betas[epoch, 1] = np.mean(loss_betas)
+
         # sch1.step()
         if not disable_early_stopping:
             early_stopping0(LOSS0[epoch, 1:].mean(), model)
@@ -201,6 +224,10 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10,
         ret_loss = loss_warmup
     else:
         ret_loss = np.r_[loss_warmup, loss_boot]
+    if lams_opt_train is not None:
+        beta_loss = LOSS_betas.cpu().detach().numpy()
+        #return G, train_loss, ret_loss, beta_loss
+        return G, beta_loss, ret_loss # keep the same number of return parameters, then in Julia, LOSS is the beta_loss
     return G, train_loss, ret_loss
 
 def load_model(n, dim_lam, J, nhidden, model_file, gpu_id = 3):

@@ -518,6 +518,8 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
                             gpu_id = 0,
                             niter_per_epoch = 100,
                             disable_tqdm = false,
+                            λs_opt_train = nothing, λs_opt_val = nothing,
+                            βs_opt_train = nothing, βs_opt_val = nothing,
                             kw...
                             )
     Ghat, LOSS = _py_boot."train_G_lambda"(Float32.(y), Float32.(B), Float32.(L), eta = η, K = K, 
@@ -533,7 +535,10 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
                                             patience0 = patience0, patience=patience, disable_early_stopping = disable_early_stopping,
                                             niter_per_epoch = niter_per_epoch,
                                             nhidden = nhidden, depth = depth,
-                                            disable_tqdm = disable_tqdm)#::Tuple{PyObject, PyArray}
+                                            disable_tqdm = disable_tqdm,
+                                            lams_opt_train = λs_opt_train, lams_opt_val = λs_opt_val,
+                                            betas_opt_train = βs_opt_train, betas_opt_val = βs_opt_val
+                                            )#::Tuple{PyObject, PyArray}
     #println(typeof(py_ret)) #Tuple{PyCall.PyObject, Matrix{Float32}} 
     # ....................... # Tuple{PyCall.PyObject, PyCall.PyArray{Float32, 2}}
     #LOSS = Matrix(py_ret[2]) # NB: not necessarily a matrix, but possibly a matrix
