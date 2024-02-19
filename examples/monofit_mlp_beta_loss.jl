@@ -40,6 +40,7 @@ G, Loss, Loss1, bfun = MonotoneSplines.py_train_G_lambda(y, B, L, nepoch = 0, ne
             nhidden = 1000, 
             λs_opt_train = λs, λs_opt_val = grid_λs, 
             βs_opt_train = βs_mat', βs_opt_val = βs_grid_mat', 
+            disable_tqdm = true,
             niter_per_epoch = 200)
 
 # Check training loss

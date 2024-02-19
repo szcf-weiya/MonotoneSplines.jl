@@ -227,7 +227,7 @@ function predict(W::MonotoneSS, xnew::AbstractVector)
     xm = xnewbar[ind_middle]
     n = length(xnew)
     if sum(ind_middle) == 0
-        Bnew = zeros(0, W.J)
+        Bnew = zeros(0, length(W.β))
     else
         # xm cannot be empty
         Bnew = rcopy(R"splines::bs($xm, intercept = TRUE, knots=$(W.knots[2:end-1]))")
