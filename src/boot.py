@@ -37,8 +37,7 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10,
                     nhidden = 1000, depth = 2, 
                     nepoch = 100, nepoch0 = 100,
                     niter_per_epoch = 100,
-                    gamma = 0.9, decay_step = 5, # TODO: how to proper set schedule? or just discard?
-                    lam_lo = 1e-9, lam_up = 1e-4, use_torchsort = False, 
+                    lam_lo = 1e-9, lam_up = 1e-4, use_torchsort = False, sample_log_lam = True,
                     sort_reg_strength = 0.1, gpu_id = 0, 
                     patience = 100, patience0 = 100, disable_early_stopping = True, # TODO: early stopping  
                     eval_sigma_adaptive = False, # if False, use `model0` to evaluate sigma
@@ -47,7 +46,9 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10,
                     lams_opt_train = None, lams_opt_val = None, # each lam corresponds to a beta (dim: N)
                     betas_opt_train = None, betas_opt_val = None, # evaluate the loss between the OPT solution and GpBS solution here (dim NxJ)
                     disable_tqdm = False):
-    #
+    # avoid boundary effect when evaluating
+    lam_lo = lam_lo * 0.9
+    lam_up = lam_up * 1.1
     device = f"cuda:{gpu_id}" if torch.cuda.is_available() and gpu_id != -1 else "cpu"
     y = torch.from_numpy(y[None, :]).to(device, non_blocking=True)
     B = torch.from_numpy(B).to(device, non_blocking=True)
@@ -61,10 +62,6 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10,
     model = Model(n+dim_lam, J, nhidden, depth, use_torchsort, sort_reg_strength).to(device)
     opt1 = torch.optim.Adam(model.parameters(), lr = eta0, amsgrad = amsgrad)
     opt2 = torch.optim.Adam(model.parameters(), lr = eta, amsgrad = amsgrad)
-    #sch1 = torch.optim.lr_scheduler.StepLR(opt1, gamma = gamma, step_size = decay_step)
-    # sch1 = torch.optim.lr_scheduler.ReduceLROnPlateau(opt1, 'min', factor = gamma, patience = patience, cooldown = cooldown, min_lr = 1e-7, threshold = 1e-5)
-    # sch1 = torch.optim.lr_scheduler.CyclicLR(opt1, 1e-6, eta0, cycle_momentum=False, mode = "exp_range", gamma = gamma)
-    sch2 = torch.optim.lr_scheduler.StepLR(opt2, gamma = gamma, step_size = decay_step)
     loss_fn = nn.functional.mse_loss
     # just realized that pytorch also did not do sort in batch
     LOSS = torch.zeros(nepoch, 4).to(device)
@@ -81,7 +78,10 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10,
         # else:
         #     lams = torch.rand((K, 1)).to(device) * (lam_up - lam_lo) + lam_lo
         for ii in pbar0:
-            lams = torch.rand((K, 1), device = device) * (lam_up - lam_lo) + lam_lo
+            if sample_log_lam:
+                lams = torch.exp(torch.rand((K, 1), device = device) * (np.log(lam_up) - np.log(lam_lo)) + np.log(lam_lo))
+            else:
+                lams = torch.rand((K, 1), device = device) * (lam_up - lam_lo) + lam_lo
             ys = torch.cat((y.repeat( (K, 1) ), lams, torch.pow(lams, 1/3), torch.exp(lams), torch.sqrt(lams), 
                                                 torch.log(lams), 10*lams, torch.square(lams), torch.pow(lams, 3)), dim = 1) # repeat works regardless of y has been augmented via `y[None, :]`
             betas = model(ys)
@@ -123,7 +123,6 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10,
             LOSS0[epoch, i+1] = loss_fn(ypred, y) + lam * torch.square(torch.matmul(beta, L)).mean() * J / n
         print(f"epoch = {epoch}, L(lam) = {LOSS0[epoch, 0]:.6f}, L(lam_lo) = {LOSS0[epoch, 1]:.6f}, L(lam_up) = {LOSS0[epoch, 2]:.6f}")
 
-        # sch1.step()
         if not disable_early_stopping:
             early_stopping0(LOSS0[epoch, 1:].mean(), model)
             if early_stopping0.early_stop:
@@ -143,7 +142,10 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10,
         for ii in pbar:
             if step2_use_tensor:
                 # construct tensor
-                lam = torch.rand((K0, 1, 1)) * (lam_up - lam_lo) + lam_lo
+                if sample_log_lam:
+                    lam = torch.exp(torch.rand((K0, 1, 1)) * (np.log(lam_up) - np.log(lam_lo)) + np.log(lam_lo))
+                else:
+                    lam = torch.rand((K0, 1, 1)) * (lam_up - lam_lo) + lam_lo
                 aug_lam = torch.cat(aug(lam), dim=2).to(device, non_blocking=True) # K0 x 1 x 8
                 ylam = torch.cat((y.repeat(K0, 1, 1), aug_lam), dim=2) # K0 x 1 x (n+8)
                 # K0 x 1 x J
@@ -189,7 +191,6 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10,
             opt2.zero_grad()
             loss2.backward()
             opt2.step()
-            # sch2.step()
             train_loss.append(loss2.item())
             pbar.set_postfix(iter = ii, loss = loss2.item())
             if ii == niter_per_epoch - 1:
@@ -202,8 +203,7 @@ def train_G_lambda(y, B, L, K = 10, K0 = 10,
             ypred = torch.matmul(beta, B.t())
             LOSS[epoch, i+1] = loss_fn(ypred, y) + lam * torch.square(torch.matmul(beta, L)).mean() * J / n
 
-        sch2.step()
-        print(f"epoch = {epoch}, L(lam) = {LOSS[epoch, 0]:.6f}, L(lam_lo) = {LOSS[epoch, 1]:.6f}, L(lam_up) = {LOSS[epoch, 2]:.6f}, lr = {sch2.get_last_lr()}")
+        print(f"epoch = {epoch}, L(lam) = {LOSS[epoch, 0]:.6f}, L(lam_lo) = {LOSS[epoch, 1]:.6f}, L(lam_up) = {LOSS[epoch, 2]:.6f}")
         if not disable_early_stopping:
             early_stopping(LOSS[epoch, 1:].mean(), model)
             if early_stopping.early_stop:

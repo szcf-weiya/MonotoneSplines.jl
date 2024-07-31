@@ -51,10 +51,15 @@ function check_CI(; n = 100, σ = 0.1, f = exp, seed = 1234,
                     nhidden = 1000, depth = 2,
                     gpu_id = 0,
                     model_file = nothing,
-                    patience = 100, 
+                    patience = 5, patience0 = 5,
                     sort_in_nn = true, # only flux
                     check_acc = false, # reduce to check_acc
-                    fig = true, figfolder = "~", kw...
+                    cmdconvert = "convert", # on chpc-gpu node, we can use `ssh sandbox convert `
+                    fig = true, figfolder = "~", 
+                    disable_early_stopping = true,
+                    eval_sigma_adaptive = false,
+                    add_cv = false, add_loocv = false, # used when compare error curves by generator and bootstrap; not recommended when n is large (e.g., the experiments of running time)
+                    kw...
                     )
     timestamp = replace(strip(read(`date -Iseconds`, String)), ":" => "_")
     if check_acc
@@ -71,7 +76,9 @@ function check_CI(; n = 100, σ = 0.1, f = exp, seed = 1234,
     Yhat0 = zeros(nλ, n)
     Yhat = zeros(nλ, n)
     ## julia's progress bar has been overrideen by tqdm's progress bar
+    ident = "$f-n$n-σ$σ"
     for i = 1:nrep
+        identi = "$ident-$i"
         if nrep == 1
             x = rand(MersenneTwister(seed), n) * 2 .- 1
             y = f.(x) + randn(MersenneTwister(seed+1), n) * σ # to avoid the same random seed
@@ -110,7 +117,7 @@ function check_CI(; n = 100, σ = 0.1, f = exp, seed = 1234,
                     LOSS = vcat(loss0, loss)
                 else # backend = "pytorch"
                     if !(@isdefined PyCall)
-                        error("PyCall/PyTorch is not properly loaded, please use Flux backend or re-install PyCall")
+                        error("Did you run `__init_pytorch__()`? PyCall/PyTorch is not properly loaded, please use Flux backend or re-install PyCall")
                     end            
                     M = K
                     model_file = "model-$f-$σ-n$n-J$J-nhidden$nhidden-$i-$seed-$timestamp.pt"
@@ -123,11 +130,13 @@ function check_CI(; n = 100, σ = 0.1, f = exp, seed = 1234,
                                                     nhidden = nhidden, depth = depth,
                                                     niter_per_epoch = niter_per_epoch,
                                                     model_file = model_file,
-                                                    patience = patience,
+                                                    patience = patience, patience0 = patience0, disable_early_stopping = disable_early_stopping,
+                                                    eval_sigma_adaptive = eval_sigma_adaptive,
                                                     nepoch0 = nepoch0, λl = λs[1], λu = λs[end])
                 end    
                 if fig
-                    savefig(plot(log.(LOSS)), "$figfolder/loss-$f-$σ-$i.png")
+                    serialize("$figfolder/loss-$identi.sil", LOSS)
+                    savefig(plot(log.(LOSS)), "$figfolder/loss-$identi.png")
                 end
             else
                 # gpu is much faster
@@ -141,10 +150,12 @@ function check_CI(; n = 100, σ = 0.1, f = exp, seed = 1234,
         fit_err = zeros(nλ, n)
         RES_YCI0 = Array{Any, 1}(undef, nλ)
         for (j, λ) in enumerate(λs)
-            res_time[i, 3] += @elapsed begin
-                _, YCI = MonotoneSplines.ci_mono_ss(x, y, λ, prop_nknots=prop_nknots, B = nB)
+            if nepoch > 0
+                res_time[i, 3] += @elapsed begin
+                    _, YCI = MonotoneSplines.ci_mono_ss(x, y, λ, prop_nknots=prop_nknots, B = nB)
+                end
+                RES_YCI0[j] = YCI
             end
-            RES_YCI0[j] = YCI
             res_time[i, 4] += @elapsed begin
                 yhat = Ghat(y, λ)                
             end
@@ -160,7 +171,10 @@ function check_CI(; n = 100, σ = 0.1, f = exp, seed = 1234,
             end
         end
         if fig
-            savefig(fitfig, "$figfolder/fit-$f-$σ-$i.png")
+            savefig(fitfig, "$figfolder/fit-$identi.png")
+        end
+        if nepoch == 0 # do not run the CI part
+            continue
         end
         res_time[i, 5] = @elapsed begin
             RES_YCI, cov_hat = sample_G_λ(Ghat, y, λs, nB = nB)               
@@ -178,22 +192,26 @@ function check_CI(; n = 100, σ = 0.1, f = exp, seed = 1234,
         Err_boot[i, :, 1] .= mean(fit_err, dims=2)[:]
         Err_boot[i, :, 2] .= mean(cov_hat, dims=2)[:]
         Err_boot[i, :, 3] .= Err_boot[i, :, 1] + 2 * Err_boot[i, :, 2]
-        errs, _, _, _ = cv_mono_ss(x, y, λs, nfold = 10)
-        errs2, _, _, _ = cv_mono_ss(x, y, λs, nfold = n)
+        if add_cv
+            errs, _, _, _ = cv_mono_ss(x, y, λs, nfold = 10)
+        end
+        if add_loocv
+            errs2, _, _, _ = cv_mono_ss(x, y, λs, nfold = n)
+        end
         if fig
             errfig = plot(log.(λs), Err_boot[i, :, 3], label = "err + 2cov")
             plot!(errfig, log.(λs), Err_boot[i, :, 1], label = "err")
-            plot!(errfig, log.(λs), errs, label = "10 fold CV")
-            plot!(errfig, log.(λs), errs2, label = "LOOCV")
-            savefig(errfig, "$figfolder/err-$f-$σ-$i.png")
-            savefig(plot(log.(λs), cp), "$figfolder/cp-$f-$σ-$i.png")    
-        end
-        if fig # TODO: cannot generalize
-            if strip(read(`hostname`, String)) == "chpc-gpu019"
-                run(`ssh sandbox convert $figfolder/cp-$f-$σ-$i.png $figfolder/err-$f-$σ-$i.png $figfolder/fit-$f-$σ-$i.png $figfolder/loss-$f-$σ-$i.png +append $figfolder/$f-$σ-$i.png`)
-            else
-                run(`convert $figfolder/cp-$f-$σ-$i.png $figfolder/err-$f-$σ-$i.png $figfolder/fit-$f-$σ-$i.png $figfolder/loss-$f-$σ-$i.png +append $figfolder/$f-$σ-$i.png`)
+            if add_cv
+                plot!(errfig, log.(λs), errs, label = "10 fold CV")
             end
+            if add_loocv
+                plot!(errfig, log.(λs), errs2, label = "LOOCV")
+            end
+            savefig(errfig, "$figfolder/err-$identi.png")
+            savefig(plot(log.(λs), cp), "$figfolder/cp-$identi.png")    
+        end
+        if fig
+            run(`$cmdconvert $figfolder/cp-$identi.png $figfolder/err-$identi.png $figfolder/fit-$identi.png $figfolder/loss-$identi.png +append $figfolder/$identi.png`)
         end                    
     end
     serialize("$f-n$n-σ$σ-nrep$nrep-B$nB-K$K-η$η-nepoch$nepoch-$timestamp.sil", [res_covprob, res_overlap, res_err, res_time, Err_boot])
@@ -507,7 +525,7 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
                             η = 0.001, η0 = 0.001, 
                             K0 = 10, K = 10, 
                             nhidden = 1000, depth = 2,
-                            patience = 100, patience0 = 100, disable_early_stopping = true, # deprecated
+                            patience = 5, patience0 = 5, disable_early_stopping = true, # for nepoch
                             nepoch0 = 100, nepoch = 100, 
                             λl = 1e-9, λu = 1e-4,
                             use_torchsort = false, sort_reg_strength = 0.1,
@@ -516,7 +534,8 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
                             niter_per_epoch = 100,
                             disable_tqdm = false,
                             λs_opt_train = nothing, λs_opt_val = nothing,
-                            βs_opt_train = nothing, βs_opt_val = nothing
+                            βs_opt_train = nothing, βs_opt_val = nothing,
+                            eval_sigma_adaptive = false,
                             )
     Ghat, LOSS, LOSS1 = _py_boot."train_G_lambda"(Float32.(y), Float32.(B), Float32.(L), eta = η, K = K, 
                                             K0 = K0,
@@ -532,7 +551,8 @@ function py_train_G_lambda(y::AbstractVector, B::AbstractMatrix, L::AbstractMatr
                                             nhidden = nhidden, depth = depth,
                                             disable_tqdm = disable_tqdm,
                                             lams_opt_train = λs_opt_train, lams_opt_val = λs_opt_val,
-                                            betas_opt_train = βs_opt_train, betas_opt_val = βs_opt_val
+                                            betas_opt_train = βs_opt_train, betas_opt_val = βs_opt_val,
+                                            eval_sigma_adaptive = eval_sigma_adaptive
                                             )#::Tuple{PyObject, PyArray}
     #println(typeof(py_ret)) #Tuple{PyCall.PyObject, Matrix{Float32}} 
     # ....................... # Tuple{PyCall.PyObject, PyCall.PyArray{Float32, 2}}
