@@ -8,20 +8,23 @@
 
 Check the following paper for more details.
 
-> Lijun Wang, Xiaodan Fan, Huabai Li, and Jun S. Liu. “Monotone Cubic B-Splines with a Neural-Network Generator.” arXiv, November 17, 2023. https://doi.org/10.48550/arXiv.2307.01748.
+> Lijun Wang, Xiaodan Fan, Huabai Li, and Jun S. Liu (2024).  “Monotone Cubic B-Splines with a Neural-Network Generator.” Journal of Computational and Graphical Statistics. https://doi.org/10.1080/10618600.2024.2431070
 
 ```
-@online{wangMonotoneCubicBSplines2023c,
-  title = {Monotone {{Cubic B-Splines}} with a {{Neural-Network Generator}}},
+@article{wangMonotoneCubicBSplines2023b,
+  title = {Monotone Cubic {{B}}-Splines with a Neural-Network Generator},
   author = {Wang, Lijun and Fan, Xiaodan and Li, Huabai and Liu, Jun S.},
-  date = {2023-11-17},
+  year= {2024},
+  journal = {Journal of Computational and Graphical Statistics},
+  date = {2024-09-28},
   eprint = {2307.01748},
   eprinttype = {arxiv},
   eprintclass = {astro-ph, stat},
-  doi = {10.48550/arXiv.2307.01748},
-  url = {http://arxiv.org/abs/2307.01748},
-  urldate = {2023-11-20},
-  pubstate = {preprint}
+  doi = {10.1080/10618600.2024.2431070},
+  url = {https://doi.org/10.1080/10618600.2024.2431070},
+  urldate = {2023-09-21},
+  pages = {in press},
+  keywords = {published}
 }
 ```
 
