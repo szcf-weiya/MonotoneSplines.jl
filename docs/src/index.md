@@ -1,6 +1,6 @@
 # MonotoneSplines.jl Documentation
 
-> Wang, L., Fan, X., Li, H., & Liu, J. S. (2023). Monotone Cubic B-Splines (arXiv:2307.01748). arXiv. https://doi.org/10.48550/arXiv.2307.01748
+> Lijun Wang, Xiaodan Fan, Huabai Li, and Jun S. Liu (2024). “Monotone Cubic B-Splines with a Neural-Network Generator.” Journal of Computational and Graphical Statistics. https://doi.org/10.1080/10618600.2024.2431070
 
 *MonotoneSplines.jl* is a Julia package for monotone splines, which impose a monotonicity constraint on the smoothing splines. 
 
