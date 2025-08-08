@@ -1,6 +1,8 @@
 # This section illustrates the space of γ for monotonicity with a toy example J = 4.
 using LaTeXStrings
 using Plots
+using RCall
+using MonotoneSplines
 
 ## illustration of space of γ for monotonicity
 function plot_intervals(; step = 0.1, γ3 = 3, γ4 = 4, boundary = false)
@@ -61,3 +63,51 @@ end
 
 # reproduce the figure in the paper
 plot_intervals()
+
+# we can also evaluate the space volumes under different conditions using Monte Carlo methods
+function cmpr_volume(a = -10, b = 10, step = 1)
+    ξ = [0, 1]
+    τ = vcat(zeros(3), ξ, ones(3))
+    bbasis = R"fda::create.bspline.basis(breaks = $ξ, norder = 4)"
+    num_suff_nece = 0
+    num_suff = 0
+    for γ1 in a:step:b
+        for γ2 in a:step:b
+            for γ3 in a:step:b
+                for γ4 in a:step:b
+                    γ = [γ1, γ2, γ3, γ4]
+                    num_suff_nece += is_sufficient_and_necessary(γ, τ, bbasis)
+                    num_suff += is_sufficient(γ)
+                end
+            end
+        end
+    end
+    r = num_suff / num_suff_nece
+    println("num_suff = $num_suff, num_suff_nece = $num_suff_nece, suff/suff_nece = $r")
+    return num_suff, num_suff_nece
+end
+
+cmpr_volume(-10, 10, 2)
+
+# with smaller grid size, the ratio can be smaller, but it takes a longer time to evaluate.
+
+
+# plot the curves that do not satisfy the condition
+function plot_curves()
+    ξ = [0, 1]
+    τ = vcat(zeros(3), ξ, ones(3))
+    bbasis = R"fda::create.bspline.basis(breaks = $ξ, norder = 4)"
+    x = 0:0.05:1.0
+    B = rcopy(R"fda::eval.basis($x, $bbasis)")
+    y7 = B * [-2, 7, 3, 5]
+    y5 = B * [-2, 5, 3, 5]
+    mfit7 = mono_cs(x, y7, 7)
+    mfit5 = mono_cs(x, y5, 5)
+    plot(x, B * [-2, 3, 3, 5], label = latexstring("\$J=4, \\gamma_2 = 3\$"), legend = :bottomright, xlab = L"x", ylab = L"y")
+    plot!(x, B * [-2, 5, 3, 5], label = latexstring("\$J=4,\\gamma_2 = 5\$"))
+    plot!(x, B * [-2, 7, 3, 5], label = latexstring("\$J=4,\\gamma_2 = 7\$"))
+    plot!(x, mfit5.fitted, label = "J = 5", ls = :dash, lw = 2)
+    plot!(x, mfit7.fitted, label = "J = 7", ls = :dash, lw = 2)
+end
+
+plot_curves()

@@ -72,7 +72,7 @@ function pick_knots(x::AbstractVector{T}; tol = 1e-6 * iqr(x), all_knots = false
         nknots = round(Int, rcopy(R".nknots.smspl($nx)") * prop_nknots)
     end
     nknots = max(4, nknots)
-    idx = round.(Int, range(1, nx, length = nknots))
+    idx = floor.(Int, range(1, nx, length = nknots))
     rx = (ux[end] - ux[1])
     mx = ux[1]
     ux = (ux .- mx) ./ rx

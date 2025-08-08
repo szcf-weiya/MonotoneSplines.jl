@@ -143,6 +143,15 @@ recover.Sigma <- function(Sigma) {
     @test sum((βhat1 - βhat0).^2) / p < 1e-7
 end
 
+# https://github.com/szcf-weiya/MonotoneDecomposition.jl/blob/9439b977245c21434bcd69f33714d68644bcbed3/test/test_monodecomp.jl#L548C1-L553C17
+@testset "fda::bspl vs splines::bs" begin
+    x = sort(rand(10))
+    bbasis = R"fda::create.bspline.basis($x, norder=4)"
+    A = rcopy(R"splines::bs($x, intercept=TRUE, knots=$(x[2:end-1]))")
+    B = rcopy(R"predict($bbasis, $x)")
+    @test A == B
+end
+
 @testset "check derivative of Bspline" begin
     n = 20
     x = rand(n)

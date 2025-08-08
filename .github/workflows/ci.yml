@@ -28,7 +28,8 @@ jobs:
           r = getOption("repos")
           r["CRAN"] = "https://cloud.r-project.org/"
           options(repos=r)
-          install.packages("fda")
+          install.packages("remotes")
+          remotes::install_github("szcf-weiya/fda")
           install.packages("lsei")
           install.packages("splines")
         shell: sudo Rscript {0}
@@ -54,7 +55,6 @@ jobs:
       
       - uses: julia-actions/julia-runtest@v1
         env:
-          LD_PRELOAD: /usr/lib/x86_64-linux-gnu/libcurl.so.4
           LD_LIBRARY_PATH: /opt/R/${{ matrix.r-version }}/lib/R/lib
       - uses: julia-actions/julia-processcoverage@v1
       - uses: codecov/codecov-action@v3
@@ -64,7 +64,6 @@ jobs:
       - uses: julia-actions/julia-docdeploy@v1
         if: ${{ matrix.os == 'ubuntu-20.04' && matrix.julia-version == '1.8' && matrix.python-version == '3.8' }} # only run docs in one env
         env:
-          LD_PRELOAD: /usr/lib/x86_64-linux-gnu/libcurl.so.4 
           LD_LIBRARY_PATH: /opt/R/${{ matrix.r-version }}/lib/R/lib
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # If authenticating with GitHub Actions token
           DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }} # If authenticating with SSH deploy key
