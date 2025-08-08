@@ -8,7 +8,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-20.04, ubuntu-22.04]
+        os: [ubuntu-22.04]
         julia-version: ['1.8']
         python-version: ['3.8']
         r-version: ['4.2.1']
@@ -62,7 +62,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           file: lcov.info
       - uses: julia-actions/julia-docdeploy@v1
-        if: ${{ matrix.os == 'ubuntu-20.04' && matrix.julia-version == '1.8' && matrix.python-version == '3.8' }} # only run docs in one env
+        if: ${{ matrix.os == 'ubuntu-22.04' && matrix.julia-version == '1.8' && matrix.python-version == '3.8' }} # only run docs in one env
         env:
           LD_LIBRARY_PATH: /opt/R/${{ matrix.r-version }}/lib/R/lib
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # If authenticating with GitHub Actions token
